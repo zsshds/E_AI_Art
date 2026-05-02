@@ -26,6 +26,16 @@ type GenTaskResponse struct {
 	Created int              `json:"created"`
 	Data    []GenTaskData    `json:"data"`
 	Tasks   []GenTaskSummary `json:"tasks"`
+	// Chat completions format
+	Choices []ChatChoice `json:"choices,omitempty"`
+}
+
+type ChatChoice struct {
+	Message ChatMessage `json:"message"`
+}
+
+type ChatMessage struct {
+	Content string `json:"content"`
 }
 
 type GenTaskData struct {
@@ -100,17 +110,17 @@ func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey string) {
 
 // CreateImageTask submits an async image generation task.
 func (c *Client) CreateImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
-	return c.postTask(ctx, "/v1/images/generations/tasks", body)
+	return c.postTask(ctx, "/v1/chat/completions", body)
 }
 
 // EditImageTask submits an async image edit task.
 func (c *Client) EditImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
-	return c.postTask(ctx, "/v1/images/edits/tasks", body)
+	return c.postTask(ctx, "/v1/chat/completions", body)
 }
 
 // GetTaskResult polls for the result of an async task.
 func (c *Client) GetTaskResult(ctx context.Context, taskID string) (*TaskResultResponse, error) {
-	return c.getTask(ctx, "/v1/images/tasks/"+taskID)
+	return c.getTask(ctx, "/v1/chat/completions/"+taskID)
 }
 
 func (c *Client) postTask(ctx context.Context, endpoint string, body map[string]interface{}) (*GenTaskResponse, error) {

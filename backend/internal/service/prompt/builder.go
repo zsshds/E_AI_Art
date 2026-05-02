@@ -58,8 +58,10 @@ func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{}
 	}
 
 	body := map[string]interface{}{
-		"model":  modelID,
-		"prompt": prompt,
+		"model": modelID,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
 	}
 
 	switch model.GetModelType(modelID) {
@@ -82,7 +84,9 @@ func (b *PromptBuilder) buildGPTParams(body map[string]interface{}, profile *mod
 	body["n"] = 1
 	body["size"] = size
 	body["quality"] = profile.APIQuality
-	body["response_format"] = profile.OutputFormat
+	if profile.OutputFormat != "" {
+		body["response_format"] = map[string]string{"type": profile.OutputFormat}
+	}
 }
 
 func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *model.StyleProfile) {
@@ -92,7 +96,9 @@ func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *
 		aspectRatio = "1:1"
 	}
 	body["aspect_ratio"] = aspectRatio
-	body["response_format"] = profile.OutputFormat
+	if profile.OutputFormat != "" {
+		body["response_format"] = map[string]string{"type": profile.OutputFormat}
+	}
 
 	if profile.ReferenceImageURL != "" {
 		body["image"] = profile.ReferenceImageURL

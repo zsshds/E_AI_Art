@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -213,7 +214,9 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	// Build prompt and API request
 	builder := prompt.NewPromptBuilder(profile)
 	apiBody := builder.BuildAPIRequest(task.UserInput)
-	if prompt, ok := apiBody["prompt"].(string); ok {
+	if msgs, ok := apiBody["messages"].([]map[string]string); ok && len(msgs) > 0 {
+		task.FinalPrompt = msgs[0]["content"]
+	} else if prompt, ok := apiBody["prompt"].(string); ok {
 		task.FinalPrompt = prompt
 	}
 
@@ -237,12 +240,26 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 		return
 	}
 
-	// Extract platform task ID
+	// Handle chat completions synchronous response
+	if len(genResp.Choices) > 0 {
+		content := genResp.Choices[0].Message.Content
+		log.Printf("[task %s] chat completions response: %s", taskID, content)
+		// Content may be an image URL or contain image URL
+		imageURL := extractImageURL(content)
+		if imageURL == "" {
+			imageURL = content // use content as-is
+		}
+		m.taskRepo.UpdateResult(taskCtx, taskID, imageURL)
+		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "done", ResultImageURL: imageURL, Progress: 100})
+		log.Printf("[task %s] completed via chat completions", taskID)
+		return
+	}
+
+	// Handle task-based async response
 	var platformTaskID string
 	if len(genResp.Tasks) > 0 {
 		platformTaskID = genResp.Tasks[0].ID
 	} else if len(genResp.Data) > 0 {
-		// Some platforms return data array synchronously for certain models
 		imageURL := genResp.Data[0].URL
 		m.taskRepo.UpdateResult(taskCtx, taskID, imageURL)
 		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "done", ResultImageURL: imageURL, Progress: 100})
@@ -251,15 +268,25 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	}
 
 	if platformTaskID == "" {
-		m.taskRepo.UpdateFailure(taskCtx, taskID, "no task id from platform")
-		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: "no task id from platform"})
+		m.taskRepo.UpdateFailure(taskCtx, taskID, "unrecognized platform response")
+		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: "unrecognized platform response"})
 		return
 	}
 
 	log.Printf("[task %s] platform task id: %s", taskID, platformTaskID)
-
-	// Poll for result
 	m.pollTaskResult(taskCtx, taskID, platformTaskID)
+}
+
+func extractImageURL(content string) string {
+	start := strings.Index(content, "http")
+	if start == -1 {
+		return ""
+	}
+	end := strings.Index(content[start:], " ")
+	if end == -1 {
+		return content[start:]
+	}
+	return content[start : start+end]
 }
 
 func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID string) {
