@@ -1,0 +1,23 @@
+server:
+  port: 8080
+
+mongodb:
+  uri: "${MONGO_URI}"
+  database: imagegen
+
+rabbitmq:
+  uri: "${RABBITMQ_URI}"
+
+openai:
+  api_key: "${OPENAI_API_KEY}"
+
+oss:
+  bucket: "${OSS_BUCKET}"
+  endpoint: "${OSS_ENDPOINT}"
+  access_key: "${OSS_ACCESS_KEY}"
+  secret_key: "${OSS_SECRET_KEY}"
+
+worker:
+  concurrency: 5
+  timeout_sec: 150
+  max_retry: 2

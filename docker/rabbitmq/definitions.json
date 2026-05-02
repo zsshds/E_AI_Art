@@ -1,0 +1,33 @@
+{
+  "exchanges": [
+    {
+      "name": "image_tasks",
+      "type": "direct",
+      "durable": true
+    },
+    {
+      "name": "image_tasks_dlx",
+      "type": "direct",
+      "durable": true
+    }
+  ],
+  "queues": [
+    {
+      "name": "task_queue",
+      "durable": true,
+      "arguments": {
+        "x-dead-letter-exchange": "image_tasks_dlx",
+        "x-dead-letter-routing-key": "dead_tasks",
+        "x-message-ttl": 180000
+      }
+    },
+    {
+      "name": "dead_task_queue",
+      "durable": true
+    }
+  ],
+  "bindings": [
+    { "source": "image_tasks", "destination": "task_queue", "routing_key": "task" },
+    { "source": "image_tasks_dlx", "destination": "dead_task_queue", "routing_key": "dead_tasks" }
+  ]
+}

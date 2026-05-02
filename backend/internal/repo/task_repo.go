@@ -1,0 +1,136 @@
+package repo
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/imagegen/backend/internal/model"
+)
+
+type TaskRepo struct {
+	collection *mongo.Collection
+}
+
+func NewTaskRepo(db *mongo.Database) *TaskRepo {
+	return &TaskRepo{
+		collection: db.Collection("tasks"),
+	}
+}
+
+func (r *TaskRepo) Create(ctx context.Context, task *model.Task) error {
+	task.ID = primitive.NewObjectID()
+	task.Status = model.TaskStatusPending
+	task.RetryCount = 0
+	task.CreatedAt = time.Now()
+	task.UpdatedAt = time.Now()
+
+	_, err := r.collection.InsertOne(ctx, task)
+	if err != nil {
+		return fmt.Errorf("insert task: %w", err)
+	}
+	return nil
+}
+
+func (r *TaskRepo) GetByID(ctx context.Context, id string) (*model.Task, error) {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid id: %w", err)
+	}
+
+	var task model.Task
+	err = r.collection.FindOne(ctx, bson.M{"_id": objID}).Decode(&task)
+	if err != nil {
+		return nil, fmt.Errorf("find task: %w", err)
+	}
+	return &task, nil
+}
+
+func (r *TaskRepo) List(ctx context.Context, createdBy string) ([]model.Task, error) {
+	filter := bson.M{}
+	if createdBy != "" {
+		filter["created_by"] = createdBy
+	}
+
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cursor, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var tasks []model.Task
+	if err := cursor.All(ctx, &tasks); err != nil {
+		return nil, fmt.Errorf("decode tasks: %w", err)
+	}
+	return tasks, nil
+}
+
+func (r *TaskRepo) UpdateStatus(ctx context.Context, id string, status model.TaskStatus) error {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return fmt.Errorf("invalid id: %w", err)
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"status":     status,
+			"updated_at": time.Now(),
+		},
+	}
+	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	return err
+}
+
+func (r *TaskRepo) UpdateResult(ctx context.Context, id string, imageURL string) error {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return fmt.Errorf("invalid id: %w", err)
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"status":           model.TaskStatusDone,
+			"result_image_url": imageURL,
+			"updated_at":       time.Now(),
+		},
+	}
+	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	return err
+}
+
+func (r *TaskRepo) UpdateFailure(ctx context.Context, id string, errMsg string) error {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return fmt.Errorf("invalid id: %w", err)
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"status":        model.TaskStatusFailed,
+			"error_message": errMsg,
+			"updated_at":    time.Now(),
+		},
+	}
+	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	return err
+}
+
+func (r *TaskRepo) IncrementRetry(ctx context.Context, id string) error {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return fmt.Errorf("invalid id: %w", err)
+	}
+
+	update := bson.M{
+		"$inc": bson.M{"retry_count": 1},
+		"$set": bson.M{"updated_at": time.Now()},
+	}
+	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	return err
+}

@@ -1,0 +1,31 @@
+version: "3.9"
+
+# 生产覆盖配置：移除端口暴露、启用资源限制
+services:
+  mongo:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  rabbitmq:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  backend:
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  frontend:
+    ports:
+      - "80:80"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
