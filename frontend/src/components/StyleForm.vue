@@ -3,6 +3,8 @@ import { computed } from 'vue'
 
 const props = defineProps<{
   modelValue: {
+    name: string
+    model: string
     art_style: string
     color_tone: string
     lighting: string
@@ -44,10 +46,35 @@ const qualityPresets = [
   { value: 'high', label: '高', delay: '~120s', cost: '高' },
 ]
 
+const modelOptions = [
+  { value: 'gpt-4o-image', label: 'GPT-4o Image', type: 'gpt' },
+  { value: 'gpt-image-2', label: 'GPT Image 2', type: 'gpt' },
+  { value: 'gpt-image-1.5', label: 'GPT Image 1.5', type: 'gpt' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash', type: 'gemini' },
+  { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro', type: 'gemini' },
+  { value: 'nano-banana-pro', label: 'Nano Banana Pro', type: 'gemini' },
+  { value: 'mj_imagine', label: 'Midjourney Imagine', type: 'mj' },
+]
+
+function modelType() { return modelOptions.find(m => m.value === form.value.model)?.type || 'gpt' }
+
 const sizePresets = [
   { value: 'square_1k', label: '1:1', desc: '头像/图标', dimensions: '1024×1024' },
   { value: 'landscape_hd', label: '16:9', desc: '场景/Banner', dimensions: '1536×1024' },
   { value: 'portrait_hd', label: '9:16', desc: '角色立绘', dimensions: '1024×1536' },
+]
+
+const aspectRatioOptions = [
+  { value: '1:1', label: '1:1' },
+  { value: '4:3', label: '4:3' },
+  { value: '3:4', label: '3:4' },
+  { value: '16:9', label: '16:9' },
+  { value: '9:16', label: '9:16' },
+  { value: '2:3', label: '2:3' },
+  { value: '3:2', label: '3:2' },
+  { value: '4:5', label: '4:5' },
+  { value: '5:4', label: '5:4' },
+  { value: '21:9', label: '21:9' },
 ]
 
 function addToken(event: Event) {
@@ -78,6 +105,31 @@ function handleImageUpload(event: Event) {
 
 <template>
   <form class="style-form">
+    <!-- Style name -->
+    <section class="form-section">
+      <h3>风格名称 <span class="required">*</span></h3>
+      <input
+        type="text"
+        :value="form.name"
+        @input="(e) => emit('update:modelValue', { ...form, name: (e.target as HTMLInputElement).value })"
+        placeholder="给你的风格起个名字"
+        class="text-input"
+      />
+    </section>
+
+    <!-- Model selector -->
+    <section class="form-section">
+      <h3>AI 模型 <span class="required">*</span></h3>
+      <select
+        :value="form.model"
+        @change="(e) => emit('update:modelValue', { ...form, model: (e.target as HTMLSelectElement).value })"
+        class="select-input"
+      >
+        <option value="">-- 选择模型 --</option>
+        <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
+      </select>
+    </section>
+
     <!-- ArtStyle: 卡片单选 -->
     <section class="form-section">
       <h3>画风 <span class="required">*</span></h3>
@@ -187,10 +239,12 @@ function handleImageUpload(event: Event) {
       </div>
     </section>
 
-    <!-- Size: 比例图标单选 -->
-    <section class="form-section">
-      <h3>分辨率</h3>
-      <div class="card-grid cols-3">
+    <!-- Size / Aspect Ratio (depends on model type) -->
+    <section v-if="modelType() !== 'mj'" class="form-section">
+      <h3>{{ modelType() === 'gemini' ? '画面比例' : '分辨率' }}</h3>
+
+      <!-- GPT size presets -->
+      <div v-if="modelType() === 'gpt'" class="card-grid cols-3">
         <label
           v-for="size in sizePresets"
           :key="size.value"
@@ -205,6 +259,12 @@ function handleImageUpload(event: Event) {
           </div>
         </label>
       </div>
+
+      <!-- Gemini aspect ratio select -->
+      <select v-if="modelType() === 'gemini'" v-model="form.size" class="select-input">
+        <option value="">-- 选择比例 --</option>
+        <option v-for="ar in aspectRatioOptions" :key="ar.value" :value="ar.value">{{ ar.label }}</option>
+      </select>
     </section>
 
     <!-- ExtraTokens: Tag 输入 -->

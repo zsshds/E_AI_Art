@@ -13,6 +13,13 @@ type Config struct {
 	OpenAI   OpenAIConfig   `yaml:"openai"`
 	OSS      OSSConfig      `yaml:"oss"`
 	Worker   WorkerConfig   `yaml:"worker"`
+	Auth     AuthConfig     `yaml:"auth"`
+}
+
+type AuthConfig struct {
+	JWTSecret string `yaml:"jwt_secret"`
+	AdminUser string `yaml:"admin_user"`
+	AdminPass string `yaml:"admin_pass"`
 }
 
 type ServerConfig struct {
@@ -29,7 +36,8 @@ type RabbitMQConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey string `yaml:"api_key"`
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
 }
 
 type OSSConfig struct {
@@ -93,8 +101,17 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("SERVER_PORT"); v != "" {
 		// port override handled by main.go
 	}
-	if v := os.Getenv("WORKER_CONCURRENCY"); v != "" {
-		// concurrency override handled by main.go
+	if v := os.Getenv("OPENAI_BASE_URL"); v != "" {
+		cfg.OpenAI.BaseURL = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.Auth.JWTSecret = v
+	}
+	if v := os.Getenv("ADMIN_USER"); v != "" {
+		cfg.Auth.AdminUser = v
+	}
+	if v := os.Getenv("ADMIN_PASS"); v != "" {
+		cfg.Auth.AdminPass = v
 	}
 
 	return cfg, nil

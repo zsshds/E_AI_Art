@@ -18,6 +18,7 @@ type TaskUpdate struct {
 	Status         string `json:"status"`
 	ResultImageURL string `json:"result_image_url,omitempty"`
 	ErrorMessage   string `json:"error_message,omitempty"`
+	Progress       int    `json:"progress,omitempty"`
 }
 
 type Hub struct {

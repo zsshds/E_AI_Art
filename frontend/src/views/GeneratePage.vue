@@ -2,9 +2,21 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { listStyleProfiles, type StyleProfile } from '../api/style'
 import { createTask, getTask, subscribeTask, type Task } from '../api/task'
+import { useAuthStore } from '../stores/auth'
+
+const modelOptions = [
+  { value: 'gpt-4o-image', label: 'GPT-4o Image' },
+  { value: 'gpt-image-2', label: 'GPT Image 2' },
+  { value: 'gpt-image-1.5', label: 'GPT Image 1.5' },
+  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash' },
+  { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro' },
+  { value: 'nano-banana-pro', label: 'Nano Banana Pro' },
+  { value: 'mj_imagine', label: 'Midjourney Imagine' },
+]
 
 const profiles = ref<StyleProfile[]>([])
 const selectedProfileId = ref('')
+const selectedModel = ref('')
 const userInput = ref('')
 const generating = ref(false)
 const currentTask = ref<Task | null>(null)
@@ -13,10 +25,13 @@ const error = ref('')
 let unsubscribe: (() => void) | null = null
 
 onMounted(async () => {
+  const auth = useAuthStore()
   try {
     profiles.value = await listStyleProfiles()
-    // Only show locked (production) profiles to users
-    profiles.value = profiles.value.filter(p => p.is_locked)
+    // Admin sees all profiles, user only sees locked ones
+    if (!auth.isAdmin) {
+      profiles.value = profiles.value.filter(p => p.is_locked)
+    }
   } catch {
     // Handle silently
   }
@@ -25,6 +40,30 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribe?.()
 })
+
+const downloading = ref(false)
+
+async function handleDownload() {
+  if (!resultImage.value) return
+  downloading.value = true
+  try {
+    const response = await fetch(resultImage.value)
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `imagegen-${Date.now()}.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch {
+    // If CORS blocks direct fetch, open in new tab as fallback
+    window.open(resultImage.value, '_blank')
+  } finally {
+    downloading.value = false
+  }
+}
 
 async function handleGenerate() {
   if (!selectedProfileId.value || !userInput.value.trim()) return
@@ -35,7 +74,7 @@ async function handleGenerate() {
   currentTask.value = null
 
   try {
-    const task = await createTask(selectedProfileId.value, userInput.value.trim(), 'user')
+    const task = await createTask(selectedProfileId.value, userInput.value.trim(), selectedModel.value || undefined)
     currentTask.value = task
 
     // Subscribe to WebSocket updates
@@ -95,9 +134,21 @@ async function pollTask(taskId: string) {
 
       <div class="form-group">
         <label>风格选择</label>
-        <select v-model="selectedProfileId" class="select-input" :disabled="generating">
+        <select v-model="selectedProfileId" class="select-input" :disabled="generating"
+          @change="(e) => {
+            const p = profiles.find(p => p.id === (e.target as HTMLSelectElement).value)
+            if (p && p.model) selectedModel = p.model
+          }">
           <option value="">-- 选择风格 --</option>
-          <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+          <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }} ({{ p.model }})</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>AI 模型</label>
+        <select v-model="selectedModel" class="select-input" :disabled="generating">
+          <option value="">-- 选择模型 --</option>
+          <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
         </select>
       </div>
 
@@ -132,6 +183,11 @@ async function pollTask(taskId: string) {
     <div class="generate-result">
       <div v-if="resultImage" class="result-image">
         <img :src="resultImage" alt="生成结果" />
+        <div class="result-actions">
+          <button class="btn btn-primary" @click="handleDownload" :disabled="downloading">
+            {{ downloading ? '下载中...' : '下载图片' }}
+          </button>
+        </div>
       </div>
       <div v-else class="result-placeholder">
         <p>生成的图片将显示在这里</p>
@@ -235,9 +291,20 @@ textarea.text-input {
   font-size: 14px;
 }
 
+.result-image {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+}
 .result-image img {
   max-width: 100%;
   border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.result-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .btn {

@@ -11,16 +11,6 @@ type PromptBuilder struct {
 	Profile *model.StyleProfile
 }
 
-type ImageRequest struct {
-	Model        string `json:"model"`
-	Prompt       string `json:"prompt"`
-	Size         string `json:"size"`
-	Quality      string `json:"quality"`
-	Background   string `json:"background,omitempty"`
-	OutputFormat string `json:"output_format"`
-	N            int    `json:"n"`
-}
-
 func NewPromptBuilder(profile *model.StyleProfile) *PromptBuilder {
 	return &PromptBuilder{Profile: profile}
 }
@@ -49,20 +39,76 @@ func (b *PromptBuilder) Build(userInput string) string {
 	return fmt.Sprintf("%s. %s", stylePart, cleaned)
 }
 
-func (b *PromptBuilder) BuildAPIRequest(userInput string) ImageRequest {
-	size := b.Profile.Size
+// BuildAPIRequest constructs the API request body appropriate for the selected model.
+//
+// GPT models (gpt-4o-image, gpt-image-1.5):
+//   - model, prompt, n, size, quality, response_format
+//
+// Gemini models (gemini-*, nano-banana-*):
+//   - model, prompt, aspect_ratio, response_format, image (optional), image_size (optional)
+//
+// MJ models (mj_imagine):
+//   - model, prompt
+func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{} {
+	profile := b.Profile
+	prompt := b.Build(userInput)
+	modelID := profile.Model
+	if modelID == "" {
+		modelID = "gpt-4o-image"
+	}
+
+	body := map[string]interface{}{
+		"model":  modelID,
+		"prompt": prompt,
+	}
+
+	switch model.GetModelType(modelID) {
+	case model.ModelTypeGPT:
+		b.buildGPTParams(body, profile)
+	case model.ModelTypeGemini:
+		b.buildGeminiParams(body, profile)
+	case model.ModelTypeMJ:
+		// MJ only needs model + prompt
+	}
+
+	return body
+}
+
+func (b *PromptBuilder) buildGPTParams(body map[string]interface{}, profile *model.StyleProfile) {
+	size := profile.Size
 	if preset, ok := model.SizePresets[size]; ok {
 		size = preset
 	}
+	body["n"] = 1
+	body["size"] = size
+	body["quality"] = profile.APIQuality
+	body["response_format"] = profile.OutputFormat
+}
 
-	return ImageRequest{
-		Model:        "gpt-image-2",
-		Prompt:       b.Build(userInput),
-		Size:         size,
-		Quality:      b.Profile.APIQuality,
-		Background:   b.Profile.Background,
-		OutputFormat: b.Profile.OutputFormat,
-		N:            1,
+func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *model.StyleProfile) {
+	aspectRatio := profile.Size
+	// For Gemini, Size field holds the aspect_ratio
+	if aspectRatio == "" {
+		aspectRatio = "1:1"
+	}
+	body["aspect_ratio"] = aspectRatio
+	body["response_format"] = profile.OutputFormat
+
+	if profile.ReferenceImageURL != "" {
+		body["image"] = profile.ReferenceImageURL
+	}
+
+	// Image size only for gemini-3-pro and nano-banana-2 variants
+	if strings.Contains(profile.Model, "gemini-3-pro") ||
+		strings.Contains(profile.Model, "nano-banana-2") {
+		// Use api_quality as image_size hint (1K/2K/4K) or default to 1K
+		if profile.APIQuality == "high" {
+			body["image_size"] = "4K"
+		} else if profile.APIQuality == "medium" {
+			body["image_size"] = "2K"
+		} else {
+			body["image_size"] = "1K"
+		}
 	}
 }
 

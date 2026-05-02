@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/imagegen/backend/internal/middleware"
 	"github.com/imagegen/backend/internal/model"
 	"github.com/imagegen/backend/internal/repo"
 	"github.com/imagegen/backend/internal/service/prompt"
@@ -41,6 +42,8 @@ func (h *StyleProfileHandler) Create(c echo.Context) error {
 		return fail(c, http.StatusBadRequest, "name is required")
 	}
 
+	profile.CreatedBy = middleware.GetUsername(c)
+
 	if err := h.repo.Create(c.Request().Context(), &profile); err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
@@ -58,11 +61,30 @@ func (h *StyleProfileHandler) GetByID(c echo.Context) error {
 }
 
 func (h *StyleProfileHandler) List(c echo.Context) error {
-	createdBy := c.QueryParam("created_by")
+	role := middleware.GetRole(c)
+
+	// Admin sees all profiles, user only sees locked ones
+	var createdBy string
+	if role == "user" {
+		createdBy = "" // don't filter by creator for users
+	}
+
 	profiles, err := h.repo.List(c.Request().Context(), createdBy)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
+
+	// Users can only see locked profiles
+	if role == "user" {
+		filtered := make([]model.StyleProfile, 0)
+		for _, p := range profiles {
+			if p.IsLocked {
+				filtered = append(filtered, p)
+			}
+		}
+		profiles = filtered
+	}
+
 	if profiles == nil {
 		profiles = []model.StyleProfile{}
 	}
@@ -147,10 +169,13 @@ func (h *StyleProfileHandler) Preview(c echo.Context) error {
 }
 
 func (h *StyleProfileHandler) RegisterRoutes(g *echo.Group) {
-	g.POST("", h.Create)
+	// Admin-only operations
+	g.POST("", h.Create, middleware.RequireAdmin())
+	g.PUT("/:id", h.Update, middleware.RequireAdmin())
+	g.PUT("/:id/lock", h.Lock, middleware.RequireAdmin())
+
+	// Authenticated operations (any role)
 	g.GET("", h.List)
 	g.GET("/:id", h.GetByID)
-	g.PUT("/:id", h.Update)
-	g.PUT("/:id/lock", h.Lock)
 	g.POST("/:id/preview", h.Preview)
 }

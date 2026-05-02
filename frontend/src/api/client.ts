@@ -6,9 +6,18 @@ interface APIResponse<T = any> {
   data: T
 }
 
+function getToken(): string {
+  return localStorage.getItem('token') || ''
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
   const res = await fetch(`${BASE_URL}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   })
   const json: APIResponse<T> = await res.json()

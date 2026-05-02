@@ -21,8 +21,11 @@ type StyleProfile struct {
 	Composition string   `json:"composition" bson:"composition"`
 	ExtraTokens []string `json:"extra_tokens" bson:"extra_tokens"`
 
+	// 模型选择
+	Model string `json:"model" bson:"model"`
+
 	// API 参数层
-	Size         string `json:"size" bson:"size"`
+	Size         string `json:"size" bson:"size"`           // GPT: size preset key | Gemini: aspect_ratio
 	APIQuality   string `json:"api_quality" bson:"api_quality"`
 	Background   string `json:"background" bson:"background"`
 	OutputFormat string `json:"output_format" bson:"output_format"`
@@ -37,8 +40,59 @@ type StyleProfile struct {
 	UpdatedAt          time.Time `json:"updated_at" bson:"updated_at"`
 }
 
+// Model type constants
+type ModelType string
+
+const (
+	ModelTypeGPT    ModelType = "gpt"
+	ModelTypeGemini ModelType = "gemini"
+	ModelTypeMJ     ModelType = "mj"
+)
+
+// Supported models
+var SupportedModels = map[string]ModelType{
+	"gpt-4o-image":               ModelTypeGPT,
+	"gpt-4o-image-vip":           ModelTypeGPT,
+	"gpt-image-2":                ModelTypeGPT,
+	"gpt-image-1.5":              ModelTypeGPT,
+	"gemini-3-pro-image-preview": ModelTypeGemini,
+	"gemini-2.5-flash-image":     ModelTypeGemini,
+	"nano-banana-pro":            ModelTypeGemini,
+	"nano-banana-2":              ModelTypeGemini,
+	"nano-banana-2-2k":           ModelTypeGemini,
+	"nano-banana-2-4k":           ModelTypeGemini,
+	"mj_imagine":                 ModelTypeMJ,
+}
+
+// GPT model size presets (key -> "WxH")
 var SizePresets = map[string]string{
-	"square_1k":     "1024x1024",
-	"landscape_hd":  "1536x1024",
-	"portrait_hd":   "1024x1536",
+	"square_1k":    "1024x1024",
+	"landscape_hd": "1536x1024",
+	"portrait_hd":  "1024x1536",
+}
+
+// Gemini model aspect ratios
+var AspectRatioOptions = []string{
+	"1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "4:5", "5:4", "21:9",
+}
+
+// Gemini image sizes (only for gemini-3-pro-image-preview, nano-banana-2)
+var GeminiImageSizes = []string{"1K", "2K", "4K"}
+
+// GetModelType returns the ModelType for a given model ID
+func GetModelType(modelID string) ModelType {
+	if t, ok := SupportedModels[modelID]; ok {
+		return t
+	}
+	return ModelTypeGPT // default
+}
+
+// IsGeminiModel checks if model supports aspect_ratio + image_size params
+func IsGeminiModel(modelID string) bool {
+	return GetModelType(modelID) == ModelTypeGemini
+}
+
+// IsGPTModel checks if model uses standard size params
+func IsGPTModel(modelID string) bool {
+	return GetModelType(modelID) == ModelTypeGPT
 }

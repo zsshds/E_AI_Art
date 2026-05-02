@@ -6,6 +6,7 @@ export interface StyleProfile {
   created_by: string
   version: number
   is_locked: boolean
+  model: string
   art_style: string
   color_tone: string
   lighting: string
@@ -19,8 +20,8 @@ export interface StyleProfile {
   compression: number
   reference_image_url: string
   locked_prompt_prefix: string
-  created_at: string
-  updated_at: string
+  created_at?: string
+  updated_at?: string
 }
 
 export function listStyleProfiles(createdBy?: string): Promise<StyleProfile[]> {

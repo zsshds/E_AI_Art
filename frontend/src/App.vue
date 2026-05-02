@@ -1,15 +1,30 @@
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
+import { useAuthStore } from './stores/auth'
+
+const router = useRouter()
+const auth = useAuthStore()
+
+function handleLogout() {
+  auth.logout()
+  router.replace('/login')
+}
 </script>
 
 <template>
   <div class="app-container">
-    <header class="app-header">
+    <header class="app-header" v-if="auth.isAuthenticated">
       <h1>AI 生图平台</h1>
       <nav>
-        <router-link to="/style-editor">风格配置</router-link>
+        <router-link v-if="auth.isAdmin" to="/style-editor">风格配置</router-link>
         <router-link to="/generate">生图</router-link>
-        <router-link to="/review">审核队列</router-link>
+        <router-link v-if="auth.isAdmin" to="/review">审核队列</router-link>
+        <router-link v-if="auth.isAdmin" to="/settings">系统设置</router-link>
       </nav>
+      <div class="user-area">
+        <span class="user-name">{{ auth.username }} ({{ auth.isAdmin ? '管理员' : '用户' }})</span>
+        <button class="btn btn-logout" @click="handleLogout">退出</button>
+      </div>
     </header>
     <main class="app-main">
       <router-view />
@@ -74,6 +89,31 @@ body {
 .app-header nav a.router-link-exact-active {
   color: var(--color-primary);
   background: rgba(99, 102, 241, 0.08);
+}
+
+.user-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-name {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.btn-logout {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+.btn-logout:hover {
+  color: #991b1b;
+  border-color: #fca5a5;
 }
 
 .app-main {

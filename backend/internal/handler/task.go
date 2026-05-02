@@ -5,6 +5,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
+	"github.com/imagegen/backend/internal/middleware"
 	"github.com/imagegen/backend/internal/model"
 	"github.com/imagegen/backend/internal/repo"
 	"github.com/imagegen/backend/internal/service/task"
@@ -24,7 +25,7 @@ func (h *TaskHandler) Create(c echo.Context) error {
 	type CreateTaskRequest struct {
 		StyleProfileID string `json:"style_profile_id"`
 		UserInput      string `json:"user_input"`
-		CreatedBy      string `json:"created_by"`
+		Model          string `json:"model"`
 	}
 
 	var req CreateTaskRequest
@@ -39,7 +40,8 @@ func (h *TaskHandler) Create(c echo.Context) error {
 	t := &model.Task{
 		StyleProfileID: styleProfileIDFromHex(req.StyleProfileID),
 		UserInput:      req.UserInput,
-		CreatedBy:      req.CreatedBy,
+		Model:          req.Model,
+		CreatedBy:      middleware.GetUsername(c),
 	}
 
 	if err := h.repo.Create(c.Request().Context(), t); err != nil {
@@ -63,7 +65,15 @@ func (h *TaskHandler) GetByID(c echo.Context) error {
 }
 
 func (h *TaskHandler) List(c echo.Context) error {
-	createdBy := c.QueryParam("created_by")
+	role := middleware.GetRole(c)
+	username := middleware.GetUsername(c)
+
+	// Admin sees all, user sees only their own
+	var createdBy string
+	if role == "user" {
+		createdBy = username
+	}
+
 	tasks, err := h.repo.List(c.Request().Context(), createdBy)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())

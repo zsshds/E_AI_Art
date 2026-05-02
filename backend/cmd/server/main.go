@@ -15,9 +15,12 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/imagegen/backend/config"
 	"github.com/imagegen/backend/internal/handler"
+	authmw "github.com/imagegen/backend/internal/middleware"
+	"github.com/imagegen/backend/internal/model"
 	"github.com/imagegen/backend/internal/repo"
 	"github.com/imagegen/backend/internal/service/image"
 	"github.com/imagegen/backend/internal/service/task"
@@ -70,34 +73,76 @@ func main() {
 	db := mongoClient.Database(cfg.MongoDB.Database)
 
 	// Repos
+	userRepo := repo.NewUserRepo(db)
 	styleProfileRepo := repo.NewStyleProfileRepo(db)
 	taskRepo := repo.NewTaskRepo(db)
+	settingRepo := repo.NewSettingRepo(db)
+
+	// Seed default admin
+	seedAdmin(userRepo, cfg.Auth.AdminUser, cfg.Auth.AdminPass)
+
+	// Seed default settings if DB is empty
+	if _, err := settingRepo.Get(context.Background(), "api_base_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_base_url", cfg.OpenAI.BaseURL)
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_key"); err != nil {
+		settingRepo.Set(context.Background(), "api_key", cfg.OpenAI.APIKey)
+	}
 
 	// Services
-	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.Worker.TimeoutSec)
-	taskManager, err := task.NewManager(cfg.RabbitMQ.URI, imageClient, cfg.Worker.Concurrency, cfg.Worker.MaxRetry)
+	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.TimeoutSec)
+
+	// WebSocket Hub
+	hub := ws.NewHub()
+
+	taskManager, err := task.NewManager(
+		cfg.RabbitMQ.URI,
+		imageClient,
+		taskRepo,
+		styleProfileRepo,
+		hub,
+		cfg.Worker.Concurrency,
+		cfg.Worker.MaxRetry,
+		cfg.Worker.TimeoutSec,
+	)
 	if err != nil {
 		log.Fatalf("connect to rabbitmq: %v", err)
 	}
 	defer taskManager.Close()
 
-	// WebSocket Hub
-	hub := ws.NewHub()
+	// Start worker pool (context for graceful shutdown)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	taskManager.StartWorkerPool(workerCtx)
 
 	// Echo app
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		AllowCredentials: false,
+	}))
 
-	// Routes
+	// Auth routes (public: login, protected: register)
+	authGroup := e.Group("/api/v1/auth")
+	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret)
+	authHandler.RegisterRoutes(authGroup)
+
+	// Protected API routes
 	api := e.Group("/api/v1")
+	api.Use(authmw.JWTAuth(cfg.Auth.JWTSecret))
 
 	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo)
 	styleHandler.RegisterRoutes(api.Group("/style-profiles"))
 
 	taskHandler := handler.NewTaskHandler(taskRepo, taskManager)
 	taskHandler.RegisterRoutes(api.Group("/tasks"))
+
+	settingHandler := handler.NewSettingHandler(settingRepo)
+	settingHandler.RegisterRoutes(api.Group("/settings"))
 
 	// WebSocket endpoint
 	e.GET("/ws/tasks/:id", func(c echo.Context) error {
@@ -117,6 +162,7 @@ func main() {
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Println("shutting down server...")
+		workerCancel()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		e.Shutdown(ctx)
@@ -127,4 +173,34 @@ func main() {
 	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func seedAdmin(userRepo *repo.UserRepo, username, password string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := userRepo.GetByUsername(ctx, username)
+	if err == nil {
+		log.Printf("admin user '%s' already exists, skipping seed", username)
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("seed admin: hash password error: %v", err)
+		return
+	}
+
+	admin := &model.User{
+		Username:     username,
+		PasswordHash: string(hash),
+		Role:         "admin",
+	}
+
+	if err := userRepo.Create(ctx, admin); err != nil {
+		log.Printf("seed admin: create error: %v", err)
+		return
+	}
+
+	log.Printf("default admin created: %s / %s (change in production!)", username, password)
 }
