@@ -50,12 +50,22 @@ async function handleDownload() {
   if (!currentTask.value?.id) return
   downloading.value = true
   try {
+    const token = localStorage.getItem('token')
+    const resp = await fetch(`/api/v1/tasks/${currentTask.value.id}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!resp.ok) throw new Error('下载失败')
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = `/api/v1/tasks/${currentTask.value.id}/download`
+    a.href = url
     a.download = `imagegen-${currentTask.value.id.slice(-8)}.png`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    alert(e.message || '下载失败')
   } finally {
     downloading.value = false
   }
