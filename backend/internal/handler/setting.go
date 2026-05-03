@@ -34,8 +34,10 @@ func (h *SettingHandler) Update(c echo.Context) error {
 	}
 
 	allowedKeys := map[string]bool{
-		"api_base_url": true,
-		"api_key":      true,
+		"api_base_url":        true,
+		"api_key":             true,
+		"api_generation_path": true,
+		"api_poll_path":       true,
 	}
 
 	for key, value := range req {

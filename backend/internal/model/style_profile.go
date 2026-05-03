@@ -46,6 +46,7 @@ type ModelType string
 const (
 	ModelTypeGPT    ModelType = "gpt"
 	ModelTypeGemini ModelType = "gemini"
+	ModelTypeBanana ModelType = "banana"
 	ModelTypeMJ     ModelType = "mj"
 )
 
@@ -58,9 +59,9 @@ var SupportedModels = map[string]ModelType{
 	"gemini-3-pro-image-preview": ModelTypeGemini,
 	"gemini-2.5-flash-image":     ModelTypeGemini,
 	"nano-banana-pro":            ModelTypeGemini,
-	"nano-banana-2":              ModelTypeGemini,
-	"nano-banana-2-2k":           ModelTypeGemini,
-	"nano-banana-2-4k":           ModelTypeGemini,
+	"nano-banana-2":              ModelTypeBanana,
+	"nano-banana-2-2k":           ModelTypeBanana,
+	"nano-banana-2-4k":           ModelTypeBanana,
 	"mj_imagine":                 ModelTypeMJ,
 }
 

@@ -53,6 +53,18 @@ async function handleSave() {
         <small>第三方平台的 API 密钥</small>
       </div>
 
+      <div class="form-group">
+        <label>生图端点 Path</label>
+        <input v-model="settings.api_generation_path" type="text" placeholder="/v1/images/generations/tasks" class="text-input" />
+        <small>提交生图任务的端点路径</small>
+      </div>
+
+      <div class="form-group">
+        <label>轮询端点 Path</label>
+        <input v-model="settings.api_poll_path" type="text" placeholder="/v1/images/tasks/" class="text-input" />
+        <small>查询任务结果的端点路径（末尾的 / 保留）</small>
+      </div>
+
       <div v-if="message" class="message" :class="{ error: message.includes('失败') }">{{ message }}</div>
 
       <button class="btn btn-primary" @click="handleSave" :disabled="saving">

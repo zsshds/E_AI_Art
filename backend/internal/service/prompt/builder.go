@@ -58,16 +58,14 @@ func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{}
 	}
 
 	body := map[string]interface{}{
-		"model": modelID,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
-		},
+		"model":  modelID,
+		"prompt": prompt,
 	}
 
 	switch model.GetModelType(modelID) {
 	case model.ModelTypeGPT:
 		b.buildGPTParams(body, profile)
-	case model.ModelTypeGemini:
+	case model.ModelTypeGemini, model.ModelTypeBanana:
 		b.buildGeminiParams(body, profile)
 	case model.ModelTypeMJ:
 		// MJ only needs model + prompt
@@ -81,12 +79,7 @@ func (b *PromptBuilder) buildGPTParams(body map[string]interface{}, profile *mod
 	if preset, ok := model.SizePresets[size]; ok {
 		size = preset
 	}
-	body["n"] = 1
 	body["size"] = size
-	body["quality"] = profile.APIQuality
-	if profile.OutputFormat != "" {
-		body["response_format"] = map[string]string{"type": profile.OutputFormat}
-	}
 }
 
 func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *model.StyleProfile) {
@@ -95,10 +88,12 @@ func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *
 	if aspectRatio == "" {
 		aspectRatio = "1:1"
 	}
-	body["aspect_ratio"] = aspectRatio
-	if profile.OutputFormat != "" {
-		body["response_format"] = map[string]string{"type": profile.OutputFormat}
+	body["aspectRatio"] = aspectRatio
+	rf := profile.OutputFormat
+	if rf != "url" && rf != "b64_json" {
+		rf = "url"
 	}
+	body["response_format"] = rf
 
 	if profile.ReferenceImageURL != "" {
 		body["image"] = profile.ReferenceImageURL
@@ -107,13 +102,12 @@ func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *
 	// Image size only for gemini-3-pro and nano-banana-2 variants
 	if strings.Contains(profile.Model, "gemini-3-pro") ||
 		strings.Contains(profile.Model, "nano-banana-2") {
-		// Use api_quality as image_size hint (1K/2K/4K) or default to 1K
 		if profile.APIQuality == "high" {
-			body["image_size"] = "4K"
+			body["imageSize"] = "4K"
 		} else if profile.APIQuality == "medium" {
-			body["image_size"] = "2K"
+			body["imageSize"] = "2K"
 		} else {
-			body["image_size"] = "1K"
+			body["imageSize"] = "1K"
 		}
 	}
 }

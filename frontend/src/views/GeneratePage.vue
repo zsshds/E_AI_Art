@@ -11,6 +11,9 @@ const modelOptions = [
   { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash' },
   { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro' },
+  { value: 'nano-banana-2', label: 'Nano Banana 2' },
+  { value: 'nano-banana-2-2k', label: 'Nano Banana 2 (2K)' },
+  { value: 'nano-banana-2-4k', label: 'Nano Banana 2 (4K)' },
   { value: 'mj_imagine', label: 'Midjourney Imagine' },
 ]
 
@@ -44,22 +47,15 @@ onUnmounted(() => {
 const downloading = ref(false)
 
 async function handleDownload() {
-  if (!resultImage.value) return
+  if (!currentTask.value?.id) return
   downloading.value = true
   try {
-    const response = await fetch(resultImage.value)
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
-    a.download = `imagegen-${Date.now()}.png`
+    a.href = `/api/v1/tasks/${currentTask.value.id}/download`
+    a.download = `imagegen-${currentTask.value.id.slice(-8)}.png`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  } catch {
-    // If CORS blocks direct fetch, open in new tab as fallback
-    window.open(resultImage.value, '_blank')
   } finally {
     downloading.value = false
   }

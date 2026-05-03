@@ -28,7 +28,7 @@ const emptyProfile = (): StyleProfile => ({
   size: 'square_1k',
   api_quality: 'medium',
   background: 'opaque',
-  output_format: 'png',
+  output_format: 'url',
   compression: 0,
   reference_image_url: '',
   locked_prompt_prefix: '',

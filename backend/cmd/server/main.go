@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -28,9 +29,25 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load("config/config.yaml")
-	if err != nil {
-		log.Fatalf("load config: %v", err)
+	// Resolve config path: try executable dir > cwd > cwd/backend
+	candidates := []string{}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "config", "config.yaml"))
+	}
+	candidates = append(candidates,
+		"config/config.yaml",           // from backend/ dir
+		"backend/config/config.yaml",   // from project root
+	)
+
+	var cfg *config.Config
+	for _, p := range candidates {
+		if c, err := config.Load(p); err == nil {
+			cfg = c
+			break
+		}
+	}
+	if cfg == nil {
+		log.Fatalf("load config: config.yaml not found in any of %v", candidates)
 	}
 
 	// Override with env vars
@@ -87,6 +104,12 @@ func main() {
 	}
 	if _, err := settingRepo.Get(context.Background(), "api_key"); err != nil {
 		settingRepo.Set(context.Background(), "api_key", cfg.OpenAI.APIKey)
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_generation_path"); err != nil {
+		settingRepo.Set(context.Background(), "api_generation_path", "/v1/images/generations/tasks")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_poll_path"); err != nil {
+		settingRepo.Set(context.Background(), "api_poll_path", "/v1/images/tasks/")
 	}
 
 	// Services

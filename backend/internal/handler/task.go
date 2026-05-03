@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
@@ -84,10 +87,40 @@ func (h *TaskHandler) List(c echo.Context) error {
 	return ok(c, tasks)
 }
 
+func (h *TaskHandler) Download(c echo.Context) error {
+	id := c.Param("id")
+	t, err := h.repo.GetByID(c.Request().Context(), id)
+	if err != nil {
+		return fail(c, http.StatusNotFound, "task not found")
+	}
+	if t.ResultImageURL == "" {
+		return fail(c, http.StatusNotFound, "no image available")
+	}
+
+	// Fetch the image from the platform
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(t.ResultImageURL)
+	if err != nil {
+		return fail(c, http.StatusInternalServerError, fmt.Sprintf("fetch image: %v", err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fail(c, http.StatusInternalServerError, fmt.Sprintf("upstream image error %d", resp.StatusCode))
+	}
+
+	c.Response().Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="imagegen-%s.png"`, id[:8]))
+	c.Response().WriteHeader(http.StatusOK)
+	io.Copy(c.Response(), resp.Body)
+	return nil
+}
+
 func (h *TaskHandler) RegisterRoutes(g *echo.Group) {
 	g.POST("", h.Create)
 	g.GET("", h.List)
 	g.GET("/:id", h.GetByID)
+	g.GET("/:id/download", h.Download)
 }
 
 func styleProfileIDFromHex(id string) primitive.ObjectID {

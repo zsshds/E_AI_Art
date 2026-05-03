@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/imagegen/backend/internal/model"
 	"github.com/imagegen/backend/internal/repo"
 )
 
@@ -72,11 +73,20 @@ type InputTokensDetails struct {
 
 // --- Task status constants ---
 const (
+	TaskStatusPending    = "PENDING"
 	TaskStatusNotStart   = "NOT_START"
 	TaskStatusInProgress = "IN_PROGRESS"
 	TaskStatusSuccess    = "SUCCESS"
 	TaskStatusFailure    = "FAILURE"
 )
+
+func IsTerminalStatus(status string) bool {
+	return status == TaskStatusSuccess || status == TaskStatusFailure
+}
+
+func IsRunningStatus(status string) bool {
+	return status == TaskStatusPending || status == TaskStatusNotStart || status == TaskStatusInProgress
+}
 
 func NewClient(apiKey, baseURL string, settingRepo *repo.SettingRepo, timeoutSec int) *Client {
 	if baseURL == "" {
@@ -93,9 +103,12 @@ func NewClient(apiKey, baseURL string, settingRepo *repo.SettingRepo, timeoutSec
 }
 
 // resolveConfig reads dynamic settings from DB, falling back to config defaults.
-func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey string) {
+func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey, genPath, pollPath, bananaPath string) {
 	baseURL = c.baseURL
 	apiKey = c.apiKey
+	genPath = "/v1/images/generations/tasks"
+	pollPath = "/v1/images/tasks/"
+	bananaPath = "/v1/images/generations"
 
 	if c.settingRepo != nil {
 		if v, err := c.settingRepo.Get(ctx, "api_base_url"); err == nil && v != "" {
@@ -104,29 +117,43 @@ func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey string) {
 		if v, err := c.settingRepo.Get(ctx, "api_key"); err == nil && v != "" {
 			apiKey = v
 		}
+		if v, err := c.settingRepo.Get(ctx, "api_generation_path"); err == nil && v != "" {
+			genPath = v
+		}
+		if v, err := c.settingRepo.Get(ctx, "api_poll_path"); err == nil && v != "" {
+			pollPath = v
+		}
 	}
 	return
 }
 
 // CreateImageTask submits an async image generation task.
 func (c *Client) CreateImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
-	return c.postTask(ctx, "/v1/chat/completions", body)
+	baseURL, apiKey, genPath, _, bananaPath := c.resolveConfig(ctx)
+	modelID, _ := body["model"].(string)
+	if model.GetModelType(modelID) == model.ModelTypeBanana {
+		return c.postTask(ctx, baseURL+bananaPath, apiKey, body)
+	}
+	return c.postTask(ctx, baseURL+genPath, apiKey, body)
 }
 
 // EditImageTask submits an async image edit task.
 func (c *Client) EditImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
-	return c.postTask(ctx, "/v1/chat/completions", body)
+	baseURL, apiKey, genPath, _, bananaPath := c.resolveConfig(ctx)
+	modelID, _ := body["model"].(string)
+	if model.GetModelType(modelID) == model.ModelTypeBanana {
+		return c.postTask(ctx, baseURL+bananaPath, apiKey, body)
+	}
+	return c.postTask(ctx, baseURL+genPath, apiKey, body)
 }
 
-// GetTaskResult polls for the result of an async task.
+// GetTaskResult polls for the result of an async task (skip for sync models).
 func (c *Client) GetTaskResult(ctx context.Context, taskID string) (*TaskResultResponse, error) {
-	return c.getTask(ctx, "/v1/chat/completions/"+taskID)
+	baseURL, apiKey, _, pollPath, _ := c.resolveConfig(ctx)
+	return c.getTask(ctx, baseURL+pollPath+taskID, apiKey)
 }
 
-func (c *Client) postTask(ctx context.Context, endpoint string, body map[string]interface{}) (*GenTaskResponse, error) {
-	baseURL, apiKey := c.resolveConfig(ctx)
-	fullURL := baseURL + endpoint
-
+func (c *Client) postTask(ctx context.Context, fullURL, apiKey string, body map[string]interface{}) (*GenTaskResponse, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
@@ -140,6 +167,7 @@ func (c *Client) postTask(ctx context.Context, endpoint string, body map[string]
 		return nil, fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	log.Printf("[IMG-API] Auth: Bearer %s...", apiKey[:min(8, len(apiKey))])
@@ -169,10 +197,7 @@ func (c *Client) postTask(ctx context.Context, endpoint string, body map[string]
 	return &result, nil
 }
 
-func (c *Client) getTask(ctx context.Context, endpoint string) (*TaskResultResponse, error) {
-	baseURL, apiKey := c.resolveConfig(ctx)
-	fullURL := baseURL + endpoint
-
+func (c *Client) getTask(ctx context.Context, fullURL, apiKey string) (*TaskResultResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)

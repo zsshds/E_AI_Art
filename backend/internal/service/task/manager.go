@@ -308,8 +308,8 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 			continue
 		}
 
-		switch result.Status {
-		case image.TaskStatusNotStart, image.TaskStatusInProgress:
+		switch {
+		case image.IsRunningStatus(result.Status):
 			if result.Progress > lastProgress {
 				lastProgress = result.Progress
 				m.wsHub.PushUpdate(taskID, ws.TaskUpdate{
@@ -317,10 +317,10 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 					Status:   "processing",
 					Progress: result.Progress,
 				})
-				log.Printf("[task %s] progress %d%%", taskID, result.Progress)
+				log.Printf("[task %s] status=%s progress %d%%", taskID, result.Status, result.Progress)
 			}
 
-		case image.TaskStatusSuccess:
+		case result.Status == image.TaskStatusSuccess:
 			if len(result.Data) > 0 {
 				imageURL := result.Data[0].URL
 				m.taskRepo.UpdateResult(context.Background(), taskID, imageURL)
@@ -337,7 +337,7 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 			m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: "no image data"})
 			return
 
-		case image.TaskStatusFailure:
+		case result.Status == image.TaskStatusFailure:
 			errMsg := result.FailReason
 			if errMsg == "" {
 				errMsg = "platform task failed"

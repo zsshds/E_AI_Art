@@ -53,10 +53,13 @@ const modelOptions = [
   { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash', type: 'gemini' },
   { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro', type: 'gemini' },
   { value: 'nano-banana-pro', label: 'Nano Banana Pro', type: 'gemini' },
+  { value: 'nano-banana-2', label: 'Nano Banana 2', type: 'banana' },
+  { value: 'nano-banana-2-2k', label: 'Nano Banana 2 (2K)', type: 'banana' },
+  { value: 'nano-banana-2-4k', label: 'Nano Banana 2 (4K)', type: 'banana' },
   { value: 'mj_imagine', label: 'Midjourney Imagine', type: 'mj' },
 ]
 
-function modelType() { return modelOptions.find(m => m.value === form.value.model)?.type || 'gpt' }
+function modelType() { const t = modelOptions.find(m => m.value === form.value.model)?.type || 'gpt'; return (t === 'banana') ? 'gemini' : t }
 
 const sizePresets = [
   { value: 'square_1k', label: '1:1', desc: '头像/图标', dimensions: '1024×1024' },
