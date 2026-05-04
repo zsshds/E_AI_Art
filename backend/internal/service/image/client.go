@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/imagegen/backend/internal/model"
@@ -69,6 +70,20 @@ type TaskUsage struct {
 type InputTokensDetails struct {
 	TextTokens  int `json:"text_tokens"`
 	ImageTokens int `json:"image_tokens"`
+}
+
+// --- Model list types ---
+
+type ModelInfo struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type ListModelsResponse struct {
+	Object string      `json:"object"`
+	Data   []ModelInfo `json:"data"`
 }
 
 // --- Task status constants ---
@@ -151,6 +166,45 @@ func (c *Client) EditImageTask(ctx context.Context, body map[string]interface{})
 func (c *Client) GetTaskResult(ctx context.Context, taskID string) (*TaskResultResponse, error) {
 	baseURL, apiKey, _, pollPath, _ := c.resolveConfig(ctx)
 	return c.getTask(ctx, baseURL+pollPath+taskID, apiKey)
+}
+
+// ListModels fetches available models from the AI platform.
+func (c *Client) ListModels(ctx context.Context, path string) (*ListModelsResponse, error) {
+	baseURL, apiKey, _, _, _ := c.resolveConfig(ctx)
+	fullURL := path
+	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		fullURL = baseURL + path
+	}
+	return c.getModels(ctx, fullURL, apiKey)
+}
+
+func (c *Client) getModels(ctx context.Context, fullURL, apiKey string) (*ListModelsResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result ListModelsResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w (body: %s)", err, string(respBody))
+	}
+	return &result, nil
 }
 
 func (c *Client) postTask(ctx context.Context, fullURL, apiKey string, body map[string]interface{}) (*GenTaskResponse, error) {

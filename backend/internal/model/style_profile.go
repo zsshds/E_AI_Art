@@ -97,3 +97,44 @@ func IsGeminiModel(modelID string) bool {
 func IsGPTModel(modelID string) bool {
 	return GetModelType(modelID) == ModelTypeGPT
 }
+
+// Image generation model keywords for filtering /v1/models response
+var imageModelKeywords = []string{
+	"image", "banana", "dall-e", "imagen", "flux",
+	"mj_", "midjourney", "sdxl", "stable-diffusion",
+}
+
+// IsImageModel checks if a model ID looks like an image generation model.
+func IsImageModel(modelID string) bool {
+	for _, kw := range imageModelKeywords {
+		if len(modelID) >= len(kw) {
+			// Case-insensitive substring match
+			for i := 0; i <= len(modelID)-len(kw); i++ {
+				if eqFold(modelID[i:i+len(kw)], kw) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// Case-insensitive ASCII comparison
+func eqFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 32
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 32
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}

@@ -111,6 +111,12 @@ func main() {
 	if _, err := settingRepo.Get(context.Background(), "api_poll_path"); err != nil {
 		settingRepo.Set(context.Background(), "api_poll_path", "/v1/images/tasks/")
 	}
+	if _, err := settingRepo.Get(context.Background(), "model_fetch_url"); err != nil {
+		settingRepo.Set(context.Background(), "model_fetch_url", "/v1/models")
+	}
+	if _, err := settingRepo.Get(context.Background(), "model_filter_type"); err != nil {
+		settingRepo.Set(context.Background(), "model_filter_type", "image")
+	}
 
 	// Services
 	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.TimeoutSec)
@@ -164,7 +170,7 @@ func main() {
 	taskHandler := handler.NewTaskHandler(taskRepo, taskManager)
 	taskHandler.RegisterRoutes(api.Group("/tasks"))
 
-	settingHandler := handler.NewSettingHandler(settingRepo)
+	settingHandler := handler.NewSettingHandler(settingRepo, imageClient)
 	settingHandler.RegisterRoutes(api.Group("/settings"))
 
 	// WebSocket endpoint
