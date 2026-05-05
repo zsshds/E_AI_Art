@@ -23,9 +23,6 @@ export const useStyleProfileStore = defineStore('styleProfile', () => {
 
     push(profile.art_style)
     push(profile.color_tone)
-    push(profile.lighting)
-    push(profile.quality_tags)
-    push(profile.composition)
     parts.push(...(profile.extra_tokens || []))
 
     return parts.join(', ')

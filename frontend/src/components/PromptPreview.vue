@@ -5,9 +5,6 @@ const props = defineProps<{
   profile: {
     art_style: string
     color_tone: string
-    lighting: string
-    quality_tags: string
-    composition: string
     extra_tokens: string[]
   }
   userInput?: string
@@ -19,9 +16,6 @@ const fullPrompt = computed(() => {
 
   push(props.profile.art_style)
   push(props.profile.color_tone)
-  push(props.profile.lighting)
-  push(props.profile.quality_tags)
-  push(props.profile.composition)
   parts.push(...(props.profile.extra_tokens || []))
 
   const stylePart = parts.join(', ')

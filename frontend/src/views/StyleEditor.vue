@@ -8,30 +8,23 @@ import { listStyleProfiles, createStyleProfile, updateStyleProfile, lockStylePro
 const profiles = ref<StyleProfile[]>([])
 const selectedId = ref<string | null>(null)
 const saving = ref(false)
+const saveError = ref('')
 const previewing = ref(false)
 const previewImages = ref<string[]>([])
 const testInput = ref('')
 
 const emptyProfile = (): StyleProfile => ({
   name: '',
-  created_by: 'artist',
+  created_by: '',
   version: 1,
   is_locked: false,
+  model: 'gpt-4o-image',
   art_style: '',
   color_tone: '',
-  lighting: '',
-  quality_tags: '',
-  composition: '',
   extra_tokens: [],
-  size: 'square_1k',
-  api_quality: 'medium',
-  background: 'opaque',
-  output_format: 'png',
-  compression: 0,
+  project_id: '',
   reference_image_url: '',
   locked_prompt_prefix: '',
-  created_at: '',
-  updated_at: '',
 })
 
 const form = ref<StyleProfile>(emptyProfile())
@@ -63,9 +56,15 @@ function createNew() {
 }
 
 async function handleSave() {
+  if (!editedForm.value.name.trim()) {
+    saveError.value = '请输入风格名称'
+    return
+  }
+  saveError.value = ''
   saving.value = true
   try {
-    const data = { ...editedForm.value, name: editedForm.value.name || '未命名风格' }
+    // Strip server-set fields before sending
+    const { created_at, updated_at, id, ...data } = editedForm.value as any
     if (selectedId.value) {
       const updated = await updateStyleProfile(selectedId.value, data)
       form.value = { ...updated }
@@ -75,6 +74,8 @@ async function handleSave() {
       form.value = { ...created }
       profiles.value = await listStyleProfiles()
     }
+  } catch (e: any) {
+    saveError.value = e.message || '保存失败'
   } finally {
     saving.value = false
   }
@@ -133,6 +134,7 @@ async function handlePreview() {
     <!-- 区域 A: 语义配置表单 -->
     <div class="editor-form">
       <StyleForm v-if="selectedId || !selectedId" v-model="editedForm" />
+      <div v-if="saveError" class="save-error">{{ saveError }}</div>
       <div class="form-actions">
         <button class="btn btn-secondary" @click="handleSave" :disabled="saving || form.is_locked">
           {{ saving ? '保存中...' : '保存' }}
@@ -212,10 +214,19 @@ async function handlePreview() {
   padding: 20px;
 }
 
+.save-error {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;
-  margin-top: 20px;
+  margin-top: 12px;
   padding-top: 16px;
   border-top: 1px solid var(--color-border);
 }

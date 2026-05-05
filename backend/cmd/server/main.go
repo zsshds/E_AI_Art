@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -15,9 +16,12 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/imagegen/backend/config"
 	"github.com/imagegen/backend/internal/handler"
+	authmw "github.com/imagegen/backend/internal/middleware"
+	"github.com/imagegen/backend/internal/model"
 	"github.com/imagegen/backend/internal/repo"
 	"github.com/imagegen/backend/internal/service/image"
 	"github.com/imagegen/backend/internal/service/task"
@@ -25,9 +29,25 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load("config/config.yaml")
-	if err != nil {
-		log.Fatalf("load config: %v", err)
+	// Resolve config path: try executable dir > cwd > cwd/backend
+	candidates := []string{}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "config", "config.yaml"))
+	}
+	candidates = append(candidates,
+		"config/config.yaml",           // from backend/ dir
+		"backend/config/config.yaml",   // from project root
+	)
+
+	var cfg *config.Config
+	for _, p := range candidates {
+		if c, err := config.Load(p); err == nil {
+			cfg = c
+			break
+		}
+	}
+	if cfg == nil {
+		log.Fatalf("load config: config.yaml not found in any of %v", candidates)
 	}
 
 	// Override with env vars
@@ -70,34 +90,92 @@ func main() {
 	db := mongoClient.Database(cfg.MongoDB.Database)
 
 	// Repos
+	userRepo := repo.NewUserRepo(db)
 	styleProfileRepo := repo.NewStyleProfileRepo(db)
 	taskRepo := repo.NewTaskRepo(db)
+	settingRepo := repo.NewSettingRepo(db)
+	projectRepo := repo.NewProjectRepo(db)
+
+	// Seed default admin
+	seedAdmin(userRepo, cfg.Auth.AdminUser, cfg.Auth.AdminPass)
+
+	// Seed default settings if DB is empty
+	if _, err := settingRepo.Get(context.Background(), "api_base_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_base_url", cfg.OpenAI.BaseURL)
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_key"); err != nil {
+		settingRepo.Set(context.Background(), "api_key", cfg.OpenAI.APIKey)
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_generation_path"); err != nil {
+		settingRepo.Set(context.Background(), "api_generation_path", "/v1/images/generations/tasks")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_poll_path"); err != nil {
+		settingRepo.Set(context.Background(), "api_poll_path", "/v1/images/tasks/")
+	}
+	if _, err := settingRepo.Get(context.Background(), "model_fetch_url"); err != nil {
+		settingRepo.Set(context.Background(), "model_fetch_url", "/v1/models")
+	}
+	if _, err := settingRepo.Get(context.Background(), "model_filter_type"); err != nil {
+		settingRepo.Set(context.Background(), "model_filter_type", "image")
+	}
 
 	// Services
-	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.Worker.TimeoutSec)
-	taskManager, err := task.NewManager(cfg.RabbitMQ.URI, imageClient, cfg.Worker.Concurrency, cfg.Worker.MaxRetry)
+	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.TimeoutSec)
+
+	// WebSocket Hub
+	hub := ws.NewHub()
+
+	taskManager, err := task.NewManager(
+		cfg.RabbitMQ.URI,
+		imageClient,
+		taskRepo,
+		styleProfileRepo,
+		hub,
+		cfg.Worker.Concurrency,
+		cfg.Worker.MaxRetry,
+		cfg.Worker.TimeoutSec,
+	)
 	if err != nil {
 		log.Fatalf("connect to rabbitmq: %v", err)
 	}
 	defer taskManager.Close()
 
-	// WebSocket Hub
-	hub := ws.NewHub()
+	// Start worker pool (context for graceful shutdown)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	taskManager.StartWorkerPool(workerCtx)
 
 	// Echo app
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:     []string{"Content-Type", "Authorization"},
+		AllowCredentials: false,
+	}))
 
-	// Routes
+	// Auth routes (public: login, protected: register)
+	authGroup := e.Group("/api/v1/auth")
+	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret)
+	authHandler.RegisterRoutes(authGroup)
+
+	// Protected API routes
 	api := e.Group("/api/v1")
+	api.Use(authmw.JWTAuth(cfg.Auth.JWTSecret))
 
-	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo)
+	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo, projectRepo)
 	styleHandler.RegisterRoutes(api.Group("/style-profiles"))
 
-	taskHandler := handler.NewTaskHandler(taskRepo, taskManager)
+	taskHandler := handler.NewTaskHandler(taskRepo, taskManager, projectRepo, styleProfileRepo)
 	taskHandler.RegisterRoutes(api.Group("/tasks"))
+
+	settingHandler := handler.NewSettingHandler(settingRepo, imageClient)
+	settingHandler.RegisterRoutes(api.Group("/settings"))
+
+	projectHandler := handler.NewProjectHandler(projectRepo)
+	projectHandler.RegisterRoutes(api.Group("/projects"))
 
 	// WebSocket endpoint
 	e.GET("/ws/tasks/:id", func(c echo.Context) error {
@@ -117,6 +195,7 @@ func main() {
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Println("shutting down server...")
+		workerCancel()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		e.Shutdown(ctx)
@@ -127,4 +206,34 @@ func main() {
 	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func seedAdmin(userRepo *repo.UserRepo, username, password string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := userRepo.GetByUsername(ctx, username)
+	if err == nil {
+		log.Printf("admin user '%s' already exists, skipping seed", username)
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("seed admin: hash password error: %v", err)
+		return
+	}
+
+	admin := &model.User{
+		Username:     username,
+		PasswordHash: string(hash),
+		Role:         "admin",
+	}
+
+	if err := userRepo.Create(ctx, admin); err != nil {
+		log.Printf("seed admin: create error: %v", err)
+		return
+	}
+
+	log.Printf("default admin created: %s / %s (change in production!)", username, password)
 }

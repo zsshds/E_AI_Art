@@ -50,10 +50,13 @@ func (r *StyleProfileRepo) GetByID(ctx context.Context, id string) (*model.Style
 	return &profile, nil
 }
 
-func (r *StyleProfileRepo) List(ctx context.Context, createdBy string) ([]model.StyleProfile, error) {
+func (r *StyleProfileRepo) List(ctx context.Context, createdBy string, projectIDs []string) ([]model.StyleProfile, error) {
 	filter := bson.M{}
 	if createdBy != "" {
 		filter["created_by"] = createdBy
+	}
+	if len(projectIDs) > 0 {
+		filter["project_id"] = bson.M{"$in": projectIDs}
 	}
 
 	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})

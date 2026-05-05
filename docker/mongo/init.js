@@ -20,3 +20,6 @@ db.tasks.createIndex({ "created_by": 1 });
 db.tasks.createIndex({ "created_at": -1 });
 // 用于 Worker 查询 pending 任务的复合索引
 db.tasks.createIndex({ "status": 1, "created_at": 1 });
+
+db.createCollection("users");
+db.users.createIndex({ "username": 1 }, { unique: true });

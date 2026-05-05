@@ -2,9 +2,34 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { listStyleProfiles, type StyleProfile } from '../api/style'
 import { createTask, getTask, subscribeTask, type Task } from '../api/task'
+import { useAuthStore } from '../stores/auth'
+import { useAvailableModels } from '../composables/useAvailableModels'
+import PromptAssistant from '../components/PromptAssistant.vue'
+
+const { availableModels, loading: modelsLoading } = useAvailableModels()
+
+const sizeOptions = [
+  { value: 'auto', label: 'auto (默认)' },
+  { value: '1024x1024', label: '1024×1024 (1:1 正方形)' },
+  { value: '1536x1024', label: '1536×1024 (3:2 横向)' },
+  { value: '1024x1536', label: '1024×1536 (2:3 竖屏)' },
+  { value: '2048x2048', label: '2048×2048 (1:1 2K)' },
+  { value: '2048x1152', label: '2048×1152 (16:9 2K)' },
+  { value: '3840x2160', label: '3840×2160 (16:9 4K)' },
+  { value: '2160x3840', label: '2160×3840 (9:16 4K)' },
+]
+
+const qualityOptions = [
+  { value: 'low', label: '低质量 (快速)' },
+  { value: 'medium', label: '中等质量 (推荐)' },
+  { value: 'high', label: '高质量 (较慢)' },
+]
 
 const profiles = ref<StyleProfile[]>([])
 const selectedProfileId = ref('')
+const selectedModel = ref('')
+const selectedSize = ref('auto')
+const selectedQuality = ref('medium')
 const userInput = ref('')
 const generating = ref(false)
 const currentTask = ref<Task | null>(null)
@@ -13,10 +38,13 @@ const error = ref('')
 let unsubscribe: (() => void) | null = null
 
 onMounted(async () => {
+  const auth = useAuthStore()
   try {
     profiles.value = await listStyleProfiles()
-    // Only show locked (production) profiles to users
-    profiles.value = profiles.value.filter(p => p.is_locked)
+    // Admin sees all profiles, user only sees locked ones
+    if (!auth.isAdmin) {
+      profiles.value = profiles.value.filter(p => p.is_locked)
+    }
   } catch {
     // Handle silently
   }
@@ -25,6 +53,38 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribe?.()
 })
+
+const downloading = ref(false)
+
+async function handleDownload() {
+  if (!currentTask.value?.id) return
+  downloading.value = true
+  try {
+    const token = localStorage.getItem('token')
+    const resp = await fetch(`/api/v1/tasks/${currentTask.value.id}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!resp.ok) throw new Error('下载失败')
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `E_AI_Art-${currentTask.value.id.slice(-8)}.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    alert(e.message || '下载失败')
+  } finally {
+    downloading.value = false
+  }
+}
+
+function handleInsertToken(token: string) {
+  const current = userInput.value.trim()
+  userInput.value = current ? `${current}, ${token}` : token
+}
 
 async function handleGenerate() {
   if (!selectedProfileId.value || !userInput.value.trim()) return
@@ -35,7 +95,7 @@ async function handleGenerate() {
   currentTask.value = null
 
   try {
-    const task = await createTask(selectedProfileId.value, userInput.value.trim(), 'user')
+    const task = await createTask(selectedProfileId.value, userInput.value.trim(), selectedModel.value || undefined, selectedSize.value, selectedQuality.value)
     currentTask.value = task
 
     // Subscribe to WebSocket updates
@@ -90,14 +150,42 @@ async function pollTask(taskId: string) {
 <template>
   <div class="generate-page">
     <div class="generate-form">
-      <h2>AI 生图</h2>
+      <h2>E_AI_Art 生图</h2>
       <p class="subtitle">选择锁定风格，输入自然语言描述即可生图</p>
 
       <div class="form-group">
         <label>风格选择</label>
-        <select v-model="selectedProfileId" class="select-input" :disabled="generating">
+        <select v-model="selectedProfileId" class="select-input" :disabled="generating"
+          @change="(e) => {
+            const p = profiles.find(p => p.id === (e.target as HTMLSelectElement).value)
+            if (p && p.model) selectedModel = p.model
+          }">
           <option value="">-- 选择风格 --</option>
-          <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+          <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }} ({{ p.model }})</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>AI 模型</label>
+        <select v-model="selectedModel" class="select-input" :disabled="generating || modelsLoading">
+          <option value="">
+            {{ modelsLoading ? '加载中...' : availableModels.length === 0 ? '无可用模型，请联系管理员配置' : '-- 选择模型 --' }}
+          </option>
+          <option v-for="m in availableModels" :key="m.id" :value="m.id">{{ m.label }}</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>分辨率</label>
+        <select v-model="selectedSize" class="select-input" :disabled="generating">
+          <option v-for="s in sizeOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>生图质量</label>
+        <select v-model="selectedQuality" class="select-input" :disabled="generating">
+          <option v-for="q in qualityOptions" :key="q.value" :value="q.value">{{ q.label }}</option>
         </select>
       </div>
 
@@ -110,6 +198,7 @@ async function pollTask(taskId: string) {
           class="text-input"
           :disabled="generating"
         ></textarea>
+        <PromptAssistant @insert="handleInsertToken" />
       </div>
 
       <button
@@ -132,6 +221,11 @@ async function pollTask(taskId: string) {
     <div class="generate-result">
       <div v-if="resultImage" class="result-image">
         <img :src="resultImage" alt="生成结果" />
+        <div class="result-actions">
+          <button class="btn btn-primary" @click="handleDownload" :disabled="downloading">
+            {{ downloading ? '下载中...' : '下载图片' }}
+          </button>
+        </div>
       </div>
       <div v-else class="result-placeholder">
         <p>生成的图片将显示在这里</p>
@@ -235,9 +329,20 @@ textarea.text-input {
   font-size: 14px;
 }
 
+.result-image {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+}
 .result-image img {
   max-width: 100%;
   border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.result-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .btn {

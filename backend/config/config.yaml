@@ -1,15 +1,16 @@
 server:
-  port: 8080
+  port: 8081
 
 mongodb:
-  uri: "${MONGO_URI}"
+  uri: "mongodb://localhost:27017/imagegen"
   database: imagegen
 
 rabbitmq:
-  uri: "${RABBITMQ_URI}"
+  uri: "amqp://admin:changeme_rabbit@localhost:5672/"
 
 openai:
   api_key: "${OPENAI_API_KEY}"
+  base_url: "https://api.cphone.vip"
 
 oss:
   bucket: "${OSS_BUCKET}"
@@ -21,3 +22,8 @@ worker:
   concurrency: 5
   timeout_sec: 150
   max_retry: 2
+
+auth:
+  jwt_secret: "imagegen-dev-secret-change-in-production"
+  admin_user: "admin"
+  admin_pass: "admin123"

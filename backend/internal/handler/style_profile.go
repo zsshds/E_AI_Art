@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/imagegen/backend/internal/middleware"
 	"github.com/imagegen/backend/internal/model"
 	"github.com/imagegen/backend/internal/repo"
 	"github.com/imagegen/backend/internal/service/prompt"
@@ -10,11 +11,12 @@ import (
 )
 
 type StyleProfileHandler struct {
-	repo *repo.StyleProfileRepo
+	repo        *repo.StyleProfileRepo
+	projectRepo *repo.ProjectRepo
 }
 
-func NewStyleProfileHandler(repo *repo.StyleProfileRepo) *StyleProfileHandler {
-	return &StyleProfileHandler{repo: repo}
+func NewStyleProfileHandler(repo *repo.StyleProfileRepo, projectRepo *repo.ProjectRepo) *StyleProfileHandler {
+	return &StyleProfileHandler{repo: repo, projectRepo: projectRepo}
 }
 
 type APIResponse struct {
@@ -41,6 +43,8 @@ func (h *StyleProfileHandler) Create(c echo.Context) error {
 		return fail(c, http.StatusBadRequest, "name is required")
 	}
 
+	profile.CreatedBy = middleware.GetUsername(c)
+
 	if err := h.repo.Create(c.Request().Context(), &profile); err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
@@ -58,11 +62,55 @@ func (h *StyleProfileHandler) GetByID(c echo.Context) error {
 }
 
 func (h *StyleProfileHandler) List(c echo.Context) error {
-	createdBy := c.QueryParam("created_by")
-	profiles, err := h.repo.List(c.Request().Context(), createdBy)
+	role := middleware.GetRole(c)
+	ctx := c.Request().Context()
+
+	// Admin sees all profiles
+	if role == "admin" {
+		profiles, err := h.repo.List(ctx, "", nil)
+		if err != nil {
+			return fail(c, http.StatusInternalServerError, err.Error())
+		}
+		if profiles == nil {
+			profiles = []model.StyleProfile{}
+		}
+		return ok(c, profiles)
+	}
+
+	// User: get their project IDs
+	username := middleware.GetUsername(c)
+	userProjects, _ := h.projectRepo.GetProjectsForUser(ctx, username)
+	projectIDs := make([]string, 0, len(userProjects))
+	for _, p := range userProjects {
+		projectIDs = append(projectIDs, p.ID.Hex())
+	}
+
+	// Fetch profiles: user's own + from their projects
+	profiles, err := h.repo.List(ctx, "", nil)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
+
+	// Filter to locked profiles belonging to user's projects (or user-created)
+	filtered := make([]model.StyleProfile, 0)
+	for _, p := range profiles {
+		if !p.IsLocked {
+			continue
+		}
+		// Show if: no project (public) OR project is in user's project list OR user created it
+		if p.ProjectID == "" {
+			filtered = append(filtered, p)
+		} else {
+			for _, pid := range projectIDs {
+				if p.ProjectID == pid {
+					filtered = append(filtered, p)
+					break
+				}
+			}
+		}
+	}
+	profiles = filtered
+
 	if profiles == nil {
 		profiles = []model.StyleProfile{}
 	}
@@ -147,10 +195,13 @@ func (h *StyleProfileHandler) Preview(c echo.Context) error {
 }
 
 func (h *StyleProfileHandler) RegisterRoutes(g *echo.Group) {
-	g.POST("", h.Create)
+	// Admin-only operations
+	g.POST("", h.Create, middleware.RequireAdmin())
+	g.PUT("/:id", h.Update, middleware.RequireAdmin())
+	g.PUT("/:id/lock", h.Lock, middleware.RequireAdmin())
+
+	// Authenticated operations (any role)
 	g.GET("", h.List)
 	g.GET("/:id", h.GetByID)
-	g.PUT("/:id", h.Update)
-	g.PUT("/:id/lock", h.Lock)
 	g.POST("/:id/preview", h.Preview)
 }
