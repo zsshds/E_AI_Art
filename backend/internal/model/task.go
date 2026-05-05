@@ -20,6 +20,9 @@ type Task struct {
 	StyleProfileID   primitive.ObjectID `json:"style_profile_id" bson:"style_profile_id"`
 	UserInput        string             `json:"user_input" bson:"user_input"`
 	Model            string             `json:"model" bson:"model"`
+	Size             string             `json:"size" bson:"size"`
+	APIQuality       string             `json:"api_quality" bson:"api_quality"`
+	ProjectID        string             `json:"project_id" bson:"project_id"`
 	FinalPrompt      string             `json:"final_prompt" bson:"final_prompt"`
 	Status           TaskStatus         `json:"status" bson:"status"`
 	ResultImageURL   string             `json:"result_image_url" bson:"result_image_url"`

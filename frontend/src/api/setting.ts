@@ -36,3 +36,15 @@ export function fetchModels(filterType?: string): Promise<ListModelsResponse> {
   const query = filterType ? `?filter=${filterType}` : ''
   return get<ListModelsResponse>('/settings/models' + query)
 }
+
+// --- Available models (configured by admin) ---
+
+export interface AvailableModel {
+  id: string
+  type: string  // "gpt" | "gemini" | "mj" (banana merged into gemini)
+  label: string
+}
+
+export function getAvailableModels(): Promise<AvailableModel[]> {
+  return get<AvailableModel[]>('/settings/models/available')
+}

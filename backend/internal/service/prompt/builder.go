@@ -9,6 +9,9 @@ import (
 
 type PromptBuilder struct {
 	Profile *model.StyleProfile
+	// Runtime overrides (from task)
+	SizeOverride    string
+	QualityOverride string
 }
 
 func NewPromptBuilder(profile *model.StyleProfile) *PromptBuilder {
@@ -25,13 +28,10 @@ func (b *PromptBuilder) Build(userInput string) string {
 
 	appendIfNotEmpty(b.Profile.ArtStyle)
 	appendIfNotEmpty(b.Profile.ColorTone)
-	appendIfNotEmpty(b.Profile.Lighting)
-	appendIfNotEmpty(b.Profile.QualityTags)
-	appendIfNotEmpty(b.Profile.Composition)
 	parts = append(parts, b.Profile.ExtraTokens...)
 
 	stylePart := strings.Join(parts, ", ")
-	cleaned := sanitizeUserInput(userInput)
+	cleaned := strings.TrimSpace(userInput)
 
 	if stylePart == "" {
 		return cleaned
@@ -40,15 +40,6 @@ func (b *PromptBuilder) Build(userInput string) string {
 }
 
 // BuildAPIRequest constructs the API request body appropriate for the selected model.
-//
-// GPT models (gpt-4o-image, gpt-image-1.5):
-//   - model, prompt, n, size, quality, response_format
-//
-// Gemini models (gemini-*, nano-banana-*):
-//   - model, prompt, aspect_ratio, response_format, image (optional), image_size (optional)
-//
-// MJ models (mj_imagine):
-//   - model, prompt
 func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{} {
 	profile := b.Profile
 	prompt := b.Build(userInput)
@@ -62,11 +53,22 @@ func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{}
 		"prompt": prompt,
 	}
 
+	size := b.SizeOverride
+	if size == "" {
+		size = "auto"
+	}
+	apiQuality := b.QualityOverride
+	if apiQuality == "" {
+		apiQuality = "medium"
+	}
+
 	switch model.GetModelType(modelID) {
 	case model.ModelTypeGPT:
-		b.buildGPTParams(body, profile)
+		if size != "auto" {
+			body["size"] = size
+		}
 	case model.ModelTypeGemini, model.ModelTypeBanana:
-		b.buildGeminiParams(body, profile)
+		b.buildGeminiParams(body, profile, size, apiQuality)
 	case model.ModelTypeMJ:
 		// MJ only needs model + prompt
 	}
@@ -74,25 +76,15 @@ func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{}
 	return body
 }
 
-func (b *PromptBuilder) buildGPTParams(body map[string]interface{}, profile *model.StyleProfile) {
-	size := profile.Size
-	if preset, ok := model.SizePresets[size]; ok {
-		size = preset
-	}
-	body["size"] = size
-}
-
-func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *model.StyleProfile) {
-	aspectRatio := profile.Size
-	// For Gemini, Size field holds the aspect_ratio
-	if aspectRatio == "" {
-		aspectRatio = "1:1"
+func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *model.StyleProfile, size, apiQuality string) {
+	// Convert pixel size to aspect ratio
+	aspectRatio := "1:1"
+	if ar, ok := model.PixelSizeToAspectRatio[size]; ok {
+		aspectRatio = ar
 	}
 	body["aspectRatio"] = aspectRatio
-	rf := profile.OutputFormat
-	if rf != "url" && rf != "b64_json" {
-		rf = "url"
-	}
+
+	rf := "url"
 	body["response_format"] = rf
 
 	if profile.ReferenceImageURL != "" {
@@ -102,24 +94,12 @@ func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *
 	// Image size only for gemini-3-pro and nano-banana-2 variants
 	if strings.Contains(profile.Model, "gemini-3-pro") ||
 		strings.Contains(profile.Model, "nano-banana-2") {
-		if profile.APIQuality == "high" {
+		if apiQuality == "high" {
 			body["imageSize"] = "4K"
-		} else if profile.APIQuality == "medium" {
+		} else if apiQuality == "medium" {
 			body["imageSize"] = "2K"
 		} else {
 			body["imageSize"] = "1K"
 		}
 	}
-}
-
-func sanitizeUserInput(input string) string {
-	blocked := []string{
-		"realistic", "photorealistic", "3d render", "3d cg",
-		"oil painting", "watercolor", "sketch", "pixel art",
-	}
-	result := input
-	for _, word := range blocked {
-		result = strings.ReplaceAll(strings.ToLower(result), word, "")
-	}
-	return strings.TrimSpace(result)
 }

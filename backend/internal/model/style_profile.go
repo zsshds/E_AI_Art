@@ -16,20 +16,13 @@ type StyleProfile struct {
 	// Prompt 语义层
 	ArtStyle    string   `json:"art_style" bson:"art_style"`
 	ColorTone   string   `json:"color_tone" bson:"color_tone"`
-	Lighting    string   `json:"lighting" bson:"lighting"`
-	QualityTags string   `json:"quality_tags" bson:"quality_tags"`
-	Composition string   `json:"composition" bson:"composition"`
 	ExtraTokens []string `json:"extra_tokens" bson:"extra_tokens"`
 
 	// 模型选择
 	Model string `json:"model" bson:"model"`
 
-	// API 参数层
-	Size         string `json:"size" bson:"size"`           // GPT: size preset key | Gemini: aspect_ratio
-	APIQuality   string `json:"api_quality" bson:"api_quality"`
-	Background   string `json:"background" bson:"background"`
-	OutputFormat string `json:"output_format" bson:"output_format"`
-	Compression  int    `json:"compression" bson:"compression"`
+	// 项目归属（空=全局，所有用户可见）
+	ProjectID string `json:"project_id" bson:"project_id"`
 
 	// 风格参考图
 	ReferenceImageURL string `json:"reference_image_url" bson:"reference_image_url"`
@@ -65,16 +58,16 @@ var SupportedModels = map[string]ModelType{
 	"mj_imagine":                 ModelTypeMJ,
 }
 
-// GPT model size presets (key -> "WxH")
-var SizePresets = map[string]string{
-	"square_1k":    "1024x1024",
-	"landscape_hd": "1536x1024",
-	"portrait_hd":  "1024x1536",
-}
-
-// Gemini model aspect ratios
-var AspectRatioOptions = []string{
-	"1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "4:5", "5:4", "21:9",
+// PixelSizeToAspectRatio maps pixel dimensions to aspect ratios for Gemini models.
+var PixelSizeToAspectRatio = map[string]string{
+	"1024x1024": "1:1",
+	"1536x1024": "3:2",
+	"1024x1536": "2:3",
+	"2048x2048": "1:1",
+	"2048x1152": "16:9",
+	"3840x2160": "16:9",
+	"2160x3840": "9:16",
+	"auto":      "1:1",
 }
 
 // Gemini image sizes (only for gemini-3-pro-image-preview, nano-banana-2)

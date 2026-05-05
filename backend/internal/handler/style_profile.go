@@ -11,11 +11,12 @@ import (
 )
 
 type StyleProfileHandler struct {
-	repo *repo.StyleProfileRepo
+	repo        *repo.StyleProfileRepo
+	projectRepo *repo.ProjectRepo
 }
 
-func NewStyleProfileHandler(repo *repo.StyleProfileRepo) *StyleProfileHandler {
-	return &StyleProfileHandler{repo: repo}
+func NewStyleProfileHandler(repo *repo.StyleProfileRepo, projectRepo *repo.ProjectRepo) *StyleProfileHandler {
+	return &StyleProfileHandler{repo: repo, projectRepo: projectRepo}
 }
 
 type APIResponse struct {
@@ -62,28 +63,53 @@ func (h *StyleProfileHandler) GetByID(c echo.Context) error {
 
 func (h *StyleProfileHandler) List(c echo.Context) error {
 	role := middleware.GetRole(c)
+	ctx := c.Request().Context()
 
-	// Admin sees all profiles, user only sees locked ones
-	var createdBy string
-	if role == "user" {
-		createdBy = "" // don't filter by creator for users
+	// Admin sees all profiles
+	if role == "admin" {
+		profiles, err := h.repo.List(ctx, "", nil)
+		if err != nil {
+			return fail(c, http.StatusInternalServerError, err.Error())
+		}
+		if profiles == nil {
+			profiles = []model.StyleProfile{}
+		}
+		return ok(c, profiles)
 	}
 
-	profiles, err := h.repo.List(c.Request().Context(), createdBy)
+	// User: get their project IDs
+	username := middleware.GetUsername(c)
+	userProjects, _ := h.projectRepo.GetProjectsForUser(ctx, username)
+	projectIDs := make([]string, 0, len(userProjects))
+	for _, p := range userProjects {
+		projectIDs = append(projectIDs, p.ID.Hex())
+	}
+
+	// Fetch profiles: user's own + from their projects
+	profiles, err := h.repo.List(ctx, "", nil)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
 
-	// Users can only see locked profiles
-	if role == "user" {
-		filtered := make([]model.StyleProfile, 0)
-		for _, p := range profiles {
-			if p.IsLocked {
-				filtered = append(filtered, p)
+	// Filter to locked profiles belonging to user's projects (or user-created)
+	filtered := make([]model.StyleProfile, 0)
+	for _, p := range profiles {
+		if !p.IsLocked {
+			continue
+		}
+		// Show if: no project (public) OR project is in user's project list OR user created it
+		if p.ProjectID == "" {
+			filtered = append(filtered, p)
+		} else {
+			for _, pid := range projectIDs {
+				if p.ProjectID == pid {
+					filtered = append(filtered, p)
+					break
+				}
 			}
 		}
-		profiles = filtered
 	}
+	profiles = filtered
 
 	if profiles == nil {
 		profiles = []model.StyleProfile{}

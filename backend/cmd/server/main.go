@@ -94,6 +94,7 @@ func main() {
 	styleProfileRepo := repo.NewStyleProfileRepo(db)
 	taskRepo := repo.NewTaskRepo(db)
 	settingRepo := repo.NewSettingRepo(db)
+	projectRepo := repo.NewProjectRepo(db)
 
 	// Seed default admin
 	seedAdmin(userRepo, cfg.Auth.AdminUser, cfg.Auth.AdminPass)
@@ -164,14 +165,17 @@ func main() {
 	api := e.Group("/api/v1")
 	api.Use(authmw.JWTAuth(cfg.Auth.JWTSecret))
 
-	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo)
+	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo, projectRepo)
 	styleHandler.RegisterRoutes(api.Group("/style-profiles"))
 
-	taskHandler := handler.NewTaskHandler(taskRepo, taskManager)
+	taskHandler := handler.NewTaskHandler(taskRepo, taskManager, projectRepo, styleProfileRepo)
 	taskHandler.RegisterRoutes(api.Group("/tasks"))
 
 	settingHandler := handler.NewSettingHandler(settingRepo, imageClient)
 	settingHandler.RegisterRoutes(api.Group("/settings"))
+
+	projectHandler := handler.NewProjectHandler(projectRepo)
+	projectHandler.RegisterRoutes(api.Group("/projects"))
 
 	// WebSocket endpoint
 	e.GET("/ws/tasks/:id", func(c echo.Context) error {

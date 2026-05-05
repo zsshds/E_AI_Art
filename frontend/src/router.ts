@@ -26,10 +26,16 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/review',
-      name: 'Review',
-      component: () => import('./views/ReviewQueue.vue'),
+      path: '/tasks',
+      name: 'Tasks',
+      component: () => import('./views/TaskQueue.vue'),
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/projects',
+      name: 'Projects',
+      component: () => import('./views/ProjectPage.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
       path: '/settings',

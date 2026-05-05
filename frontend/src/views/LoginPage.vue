@@ -83,7 +83,7 @@ async function handleAdminRegister() {
 <template>
   <div class="login-container">
     <div class="login-card">
-      <h2>AI 生图平台</h2>
+      <h2>E_AI_Art</h2>
 
       <!-- Tabs -->
       <div class="tabs">

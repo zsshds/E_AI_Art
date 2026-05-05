@@ -14,11 +14,12 @@ function handleLogout() {
 <template>
   <div class="app-container">
     <header class="app-header" v-if="auth.isAuthenticated">
-      <h1>AI 生图平台</h1>
+      <h1>E_AI_Art</h1>
       <nav>
         <router-link v-if="auth.isAdmin" to="/style-editor">风格配置</router-link>
         <router-link to="/generate">生图</router-link>
-        <router-link v-if="auth.isAdmin" to="/review">审核队列</router-link>
+        <router-link to="/tasks">任务队列</router-link>
+        <router-link v-if="auth.isAdmin" to="/projects">项目管理</router-link>
         <router-link v-if="auth.isAdmin" to="/settings">系统设置</router-link>
       </nav>
       <div class="user-area">

@@ -38,7 +38,7 @@ async function handleDownload(taskId: string) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `imagegen-${taskId.slice(-8)}.png`
+    a.download = `E_AI_Art-${taskId.slice(-8)}.png`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -70,7 +70,7 @@ const statusLabels: Record<string, string> = {
 <template>
   <div class="review-queue">
     <div class="queue-header">
-      <h2>审核队列</h2>
+      <h2>任务队列</h2>
       <button class="btn btn-secondary" @click="refresh" :disabled="loading">
         {{ loading ? '刷新中...' : '刷新' }}
       </button>

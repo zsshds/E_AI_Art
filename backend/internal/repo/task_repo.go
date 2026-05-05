@@ -51,10 +51,13 @@ func (r *TaskRepo) GetByID(ctx context.Context, id string) (*model.Task, error) 
 	return &task, nil
 }
 
-func (r *TaskRepo) List(ctx context.Context, createdBy string) ([]model.Task, error) {
+func (r *TaskRepo) List(ctx context.Context, createdBy string, projectIDs []string) ([]model.Task, error) {
 	filter := bson.M{}
 	if createdBy != "" {
 		filter["created_by"] = createdBy
+	}
+	if len(projectIDs) > 0 {
+		filter["project_id"] = bson.M{"$in": projectIDs}
 	}
 
 	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})

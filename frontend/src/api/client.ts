@@ -22,6 +22,14 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   })
   const json: APIResponse<T> = await res.json()
   if (json.code !== 0) {
+    // On auth failure, clear token and redirect to login
+    if (res.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('username')
+      localStorage.removeItem('role')
+      window.location.href = '/login'
+      throw new Error('登录已过期，请重新登录')
+    }
     throw new Error(json.message)
   }
   return json.data
@@ -43,4 +51,8 @@ export function put<T>(url: string, body: any): Promise<T> {
     method: 'PUT',
     body: JSON.stringify(body),
   })
+}
+
+export function del<T>(url: string): Promise<T> {
+  return request<T>(url, { method: 'DELETE' })
 }

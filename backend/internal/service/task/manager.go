@@ -213,6 +213,8 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 
 	// Build prompt and API request
 	builder := prompt.NewPromptBuilder(profile)
+	builder.SizeOverride = task.Size
+	builder.QualityOverride = task.APIQuality
 	apiBody := builder.BuildAPIRequest(task.UserInput)
 	if msgs, ok := apiBody["messages"].([]map[string]string); ok && len(msgs) > 0 {
 		task.FinalPrompt = msgs[0]["content"]

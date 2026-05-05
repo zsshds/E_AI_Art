@@ -5,6 +5,8 @@ export interface Task {
   style_profile_id: string
   user_input: string
   model: string
+  size: string
+  api_quality: string
   final_prompt: string
   status: 'pending' | 'processing' | 'done' | 'failed'
   result_image_url: string
@@ -15,11 +17,13 @@ export interface Task {
   updated_at: string
 }
 
-export function createTask(styleProfileId: string, userInput: string, model?: string): Promise<Task> {
+export function createTask(styleProfileId: string, userInput: string, model?: string, size?: string, apiQuality?: string): Promise<Task> {
   return post<Task>('/tasks', {
     style_profile_id: styleProfileId,
     user_input: userInput,
     model: model || '',
+    size: size || 'auto',
+    api_quality: apiQuality || 'medium',
   })
 }
 
