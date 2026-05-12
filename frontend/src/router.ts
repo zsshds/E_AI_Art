@@ -26,6 +26,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/tasks/:id',
+      name: 'TaskDetail',
+      component: () => import('./views/TaskDetailPage.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/tasks',
       name: 'Tasks',
       component: () => import('./views/TaskQueue.vue'),
@@ -41,6 +47,12 @@ const router = createRouter({
       path: '/settings',
       name: 'Settings',
       component: () => import('./views/SettingsPage.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/users',
+      name: 'Users',
+      component: () => import('./views/UserManagePage.vue'),
       meta: { requiresAuth: true, requiresAdmin: true },
     },
   ],

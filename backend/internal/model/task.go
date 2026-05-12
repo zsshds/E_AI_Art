@@ -27,6 +27,9 @@ type Task struct {
 	Status           TaskStatus         `json:"status" bson:"status"`
 	ResultImageURL   string             `json:"result_image_url" bson:"result_image_url"`
 	ErrorMessage     string             `json:"error_message" bson:"error_message"`
+	SourceImageURLs  []string           `json:"source_image_urls" bson:"source_image_urls"`
+	ImageCount       int                `json:"image_count" bson:"image_count"`
+	ParentTaskID     primitive.ObjectID `json:"parent_task_id,omitempty" bson:"parent_task_id,omitempty"`
 	PlatformTaskID   string             `json:"platform_task_id" bson:"platform_task_id"`
 	Progress         int                `json:"progress" bson:"progress"`
 	RetryCount       int                `json:"retry_count" bson:"retry_count"`

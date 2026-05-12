@@ -12,18 +12,24 @@ export interface Task {
   result_image_url: string
   error_message: string
   retry_count: number
+  progress: number
   created_by: string
   created_at: string
   updated_at: string
+  source_image_urls: string[]
+  image_count: number
+  parent_task_id?: string
 }
 
-export function createTask(styleProfileId: string, userInput: string, model?: string, size?: string, apiQuality?: string): Promise<Task> {
+export function createTask(styleProfileId: string, userInput: string, model?: string, size?: string, apiQuality?: string, sourceImages?: string[], imageCount?: number): Promise<Task> {
   return post<Task>('/tasks', {
     style_profile_id: styleProfileId,
     user_input: userInput,
     model: model || '',
     size: size || 'auto',
     api_quality: apiQuality || 'medium',
+    source_images: sourceImages || [],
+    image_count: imageCount || 1,
   })
 }
 
@@ -50,4 +56,12 @@ export function subscribeTask(taskId: string, onUpdate: (data: any) => void): ()
   }
 
   return () => ws.close()
+}
+
+export function sendChatMessage(taskId: string, message: string): Promise<Task> {
+  return post<Task>(`/tasks/${taskId}/chat`, { message })
+}
+
+export function getTaskConversation(taskId: string): Promise<Task[]> {
+  return get<Task[]>(`/tasks/${taskId}/conversation`)
 }

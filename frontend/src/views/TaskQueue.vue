@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { listTasks, type Task } from '../api/task'
 
+const router = useRouter()
 const tasks = ref<Task[]>([])
 const filter = ref<'all' | 'pending' | 'processing' | 'done' | 'failed'>('all')
 const loading = ref(false)
-const expandedId = ref<string | null>(null)
 const downloading = ref(false)
 
 onMounted(async () => {
@@ -21,8 +22,8 @@ async function refresh() {
   }
 }
 
-function toggleExpand(taskId: string) {
-  expandedId.value = expandedId.value === taskId ? null : taskId
+function goToTask(taskId: string) {
+  router.push({ name: 'TaskDetail', params: { id: taskId } })
 }
 
 async function handleDownload(taskId: string) {
@@ -53,10 +54,6 @@ async function handleDownload(taskId: string) {
 const filteredTasks = computed(() => {
   if (filter.value === 'all') return tasks.value
   return tasks.value.filter(t => t.status === filter.value)
-})
-
-const expandedTask = computed(() => {
-  return tasks.value.find(t => t.id === expandedId.value) || null
 })
 
 const statusLabels: Record<string, string> = {
@@ -102,8 +99,7 @@ const statusLabels: Record<string, string> = {
         v-for="task in filteredTasks"
         :key="task.id"
         class="table-row"
-        :class="{ expanded: expandedId === task.id }"
-        @click="toggleExpand(task.id!)"
+        @click="goToTask(task.id!)"
       >
         <span class="col-id" :title="task.id">{{ task.id?.slice(-8) }}</span>
         <span class="col-user">{{ task.created_by }}</span>
@@ -115,63 +111,6 @@ const statusLabels: Record<string, string> = {
       </div>
     </div>
 
-    <!-- Detail panel -->
-    <div v-if="expandedTask" class="detail-panel">
-      <div class="detail-header">
-        <h3>任务详情 — {{ expandedTask.id?.slice(-8) }}</h3>
-        <button class="btn-close" @click="expandedId = null">&times;</button>
-      </div>
-
-      <div class="detail-grid">
-        <div class="detail-item">
-          <label>任务ID</label>
-          <code>{{ expandedTask.id }}</code>
-        </div>
-        <div class="detail-item">
-          <label>创建者</label>
-          <span>{{ expandedTask.created_by }}</span>
-        </div>
-        <div class="detail-item">
-          <label>模型</label>
-          <span>{{ expandedTask.model || '-' }}</span>
-        </div>
-        <div class="detail-item">
-          <label>状态</label>
-          <span class="status-badge" :class="expandedTask.status">{{ statusLabels[expandedTask.status] }}</span>
-        </div>
-        <div class="detail-item">
-          <label>创建时间</label>
-          <span>{{ new Date(expandedTask.created_at).toLocaleString() }}</span>
-        </div>
-        <div class="detail-item">
-          <label>重试次数</label>
-          <span>{{ expandedTask.retry_count }}</span>
-        </div>
-        <div class="detail-item full-width">
-          <label>用户输入</label>
-          <pre>{{ expandedTask.user_input }}</pre>
-        </div>
-        <div class="detail-item full-width">
-          <label>最终 Prompt</label>
-          <pre>{{ expandedTask.final_prompt }}</pre>
-        </div>
-      </div>
-
-      <!-- Failed task: error message -->
-      <div v-if="expandedTask.status === 'failed'" class="detail-error">
-        <h4>失败原因</h4>
-        <p>{{ expandedTask.error_message || '未知错误' }}</p>
-      </div>
-
-      <!-- Done task: image + download -->
-      <div v-if="expandedTask.status === 'done' && expandedTask.result_image_url" class="detail-image">
-        <h4>生成结果</h4>
-        <img :src="expandedTask.result_image_url" alt="生成结果" />
-        <button class="btn btn-primary" @click.stop="handleDownload(expandedTask.id!)" :disabled="downloading">
-          {{ downloading ? '下载中...' : '下载图片' }}
-        </button>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -242,8 +181,6 @@ const statusLabels: Record<string, string> = {
 }
 .table-row:last-child { border-bottom: none; }
 .table-row:hover { background: rgba(99, 102, 241, 0.04); }
-.table-row.expanded { background: rgba(99, 102, 241, 0.06); }
-
 .col-id { font-family: monospace; }
 .col-input {
   overflow: hidden;
@@ -261,87 +198,6 @@ const statusLabels: Record<string, string> = {
 .status-badge.processing { background: #dbeafe; color: #1e40af; }
 .status-badge.done { background: #d1fae5; color: #065f46; }
 .status-badge.failed { background: #fee2e2; color: #991b1b; }
-
-/* Detail panel */
-.detail-panel {
-  margin-top: 16px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 20px;
-}
-
-.detail-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.detail-header h3 { font-size: 16px; }
-
-.btn-close {
-  border: none;
-  background: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: var(--color-text-muted);
-  line-height: 1;
-}
-
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.detail-item {
-  min-width: 0;
-}
-.detail-item.full-width { grid-column: 1 / -1; }
-.detail-item label {
-  display: block;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-bottom: 4px;
-}
-.detail-item code {
-  font-size: 12px;
-  word-break: break-all;
-}
-.detail-item pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-  line-height: 1.5;
-  background: var(--color-bg);
-  padding: 8px;
-  border-radius: 4px;
-  margin: 0;
-}
-
-.detail-error {
-  margin-top: 16px;
-  padding: 12px;
-  background: #fee2e2;
-  border-radius: var(--radius);
-}
-.detail-error h4 { font-size: 14px; color: #991b1b; margin-bottom: 4px; }
-.detail-error p { font-size: 13px; color: #7f1d1d; margin: 0; white-space: pre-wrap; word-break: break-word; }
-
-.detail-image {
-  margin-top: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-.detail-image h4 { font-size: 14px; }
-.detail-image img {
-  max-width: 100%;
-  max-height: 600px;
-  border-radius: var(--radius);
-  border: 1px solid var(--color-border);
-}
 
 .btn {
   padding: 8px 16px;

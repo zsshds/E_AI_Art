@@ -177,6 +177,9 @@ func main() {
 	projectHandler := handler.NewProjectHandler(projectRepo)
 	projectHandler.RegisterRoutes(api.Group("/projects"))
 
+	userHandler := handler.NewUserHandler(userRepo)
+	userHandler.RegisterRoutes(api.Group("/users", authmw.RequireAdmin()))
+
 	// WebSocket endpoint
 	e.GET("/ws/tasks/:id", func(c echo.Context) error {
 		taskID := c.Param("id")

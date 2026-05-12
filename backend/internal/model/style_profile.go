@@ -11,7 +11,6 @@ type StyleProfile struct {
 	Name      string             `json:"name" bson:"name"`
 	CreatedBy string             `json:"created_by" bson:"created_by"`
 	Version   int                `json:"version" bson:"version"`
-	IsLocked  bool               `json:"is_locked" bson:"is_locked"`
 
 	// Prompt 语义层
 	ArtStyle    string   `json:"art_style" bson:"art_style"`
@@ -24,11 +23,9 @@ type StyleProfile struct {
 	// 项目归属（空=全局，所有用户可见）
 	ProjectID string `json:"project_id" bson:"project_id"`
 
-	// 风格参考图
-	ReferenceImageURL string `json:"reference_image_url" bson:"reference_image_url"`
+	// 风格参考图（最多 10 张）
+	ReferenceImageURLs []string `json:"reference_image_urls" bson:"reference_image_urls"`
 
-	// 锁定后的 Prompt 模板
-	LockedPromptPrefix string    `json:"locked_prompt_prefix" bson:"locked_prompt_prefix"`
 	CreatedAt          time.Time `json:"created_at" bson:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at" bson:"updated_at"`
 }

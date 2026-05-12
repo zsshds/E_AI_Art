@@ -13,7 +13,7 @@ const props = defineProps<{
     color_tone: string
     extra_tokens: string[]
     project_id: string
-    reference_image_url: string
+    reference_image_urls: string[]
   }
 }>()
 
@@ -40,26 +40,41 @@ function handleApplyTemplate(fields: Record<string, string>) {
 function addToken(event: Event) {
   const input = event.target as HTMLInputElement
   const value = input.value.trim()
-  if (value && !form.value.extra_tokens.includes(value)) {
-    const updated = { ...form.value, extra_tokens: [...form.value.extra_tokens, value] }
-    emit('update:modelValue', updated)
+  const tokens = form.value.extra_tokens || []
+  if (value && !tokens.includes(value)) {
+    emit('update:modelValue', { ...form.value, extra_tokens: [...tokens, value] })
   }
   input.value = ''
 }
 
 function removeToken(index: number) {
-  const tokens = [...form.value.extra_tokens]
+  const tokens = [...(form.value.extra_tokens || [])]
   tokens.splice(index, 1)
   emit('update:modelValue', { ...form.value, extra_tokens: tokens })
 }
 
 function handleImageUpload(event: Event) {
   const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (file) {
+  const files = input.files
+  if (!files || files.length === 0) return
+  const urls = form.value.reference_image_urls || []
+  const remaining = 10 - urls.length
+  if (remaining <= 0) return
+  const count = Math.min(files.length, remaining)
+  for (let i = 0; i < count; i++) {
+    const file = files[i]
+    if (!file) continue
     const url = URL.createObjectURL(file)
-    emit('update:modelValue', { ...form.value, reference_image_url: url })
+    urls.push(url)
   }
+  emit('update:modelValue', { ...form.value, reference_image_urls: [...urls] })
+  input.value = ''
+}
+
+function removeReferenceImage(index: number) {
+  const urls = [...(form.value.reference_image_urls || [])]
+  urls.splice(index, 1)
+  emit('update:modelValue', { ...form.value, reference_image_urls: urls })
 }
 </script>
 
@@ -130,10 +145,10 @@ function handleImageUpload(event: Event) {
       <div class="row">
         <input
           type="color"
-          :value="form.color_tone.startsWith('#') ? form.color_tone : ''"
+          :value="(form.color_tone || '').startsWith('#') ? form.color_tone : ''"
           @input="(e) => emit('update:modelValue', { ...form, color_tone: (e.target as HTMLInputElement).value })"
           class="color-picker"
-          :title="form.color_tone.startsWith('#') ? form.color_tone : '选择颜色'"
+          :title="(form.color_tone || '').startsWith('#') ? form.color_tone : '选择颜色'"
         />
         <input
           type="text"
@@ -172,7 +187,7 @@ function handleImageUpload(event: Event) {
           :key="preset"
           type="button"
           class="chip"
-          :class="{ active: form.color_tone === preset }"
+          :class="{ active: (form.color_tone || '') === preset }"
           @click="emit('update:modelValue', { ...form, color_tone: preset })"
         >{{ preset }}</button>
       </div>
@@ -197,10 +212,31 @@ function handleImageUpload(event: Event) {
 
     <!-- ReferenceImageURL: 上传 -->
     <section class="form-section">
-      <h3>风格参考图 <span class="hint">（最强一致性保障，使用 Edits 端点）</span></h3>
+      <h3>风格参考图 <span class="hint">（最多 10 张，最强一致性保障）</span></h3>
       <div class="upload-area">
-        <input type="file" accept="image/*" @change="handleImageUpload" />
-        <img v-if="form.reference_image_url" :src="form.reference_image_url" class="ref-preview" />
+        <div class="ref-grid">
+          <div
+            v-for="(url, i) in form.reference_image_urls"
+            :key="i"
+            class="ref-thumb"
+          >
+            <img :src="url" :alt="`参考图 ${i + 1}`" />
+            <button
+              type="button"
+              class="ref-remove-btn"
+              @click="removeReferenceImage(i)"
+              title="移除"
+            >✕</button>
+          </div>
+          <label
+            v-if="(form.reference_image_urls || []).length < 10"
+            class="ref-add-btn"
+            title="添加参考图"
+          >
+            <span>+</span>
+            <input type="file" accept="image/*" multiple @change="handleImageUpload" class="ref-file-input" />
+          </label>
+        </div>
       </div>
     </section>
   </form>
@@ -270,8 +306,61 @@ function handleImageUpload(event: Event) {
 .tag-remove { border: none; background: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; }
 .tag-input { border: none; outline: none; flex: 1; min-width: 120px; font-size: 14px; }
 
-.upload-area { display: flex; gap: 12px; align-items: flex-start; }
-.ref-preview { width: 120px; height: 120px; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--color-border); }
+.upload-area { width: 100%; }
+.ref-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.ref-thumb {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ref-remove-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+.ref-remove-btn:hover { background: #ef4444; }
+.ref-add-btn {
+  width: 80px;
+  height: 80px;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.ref-add-btn:hover { border-color: var(--color-primary); }
+.ref-add-btn span { font-size: 28px; color: var(--color-text-muted); }
+.ref-file-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
 
 .preset-category {
   margin-bottom: 10px;

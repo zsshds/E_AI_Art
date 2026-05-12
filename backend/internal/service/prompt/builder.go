@@ -10,8 +10,10 @@ import (
 type PromptBuilder struct {
 	Profile *model.StyleProfile
 	// Runtime overrides (from task)
+	SourceImageURLs []string
 	SizeOverride    string
 	QualityOverride string
+	ImageCount      int
 }
 
 func NewPromptBuilder(profile *model.StyleProfile) *PromptBuilder {
@@ -39,7 +41,62 @@ func (b *PromptBuilder) Build(userInput string) string {
 	return fmt.Sprintf("%s. %s", stylePart, cleaned)
 }
 
-// BuildAPIRequest constructs the API request body appropriate for the selected model.
+// BuildChatRequest constructs a chat completions request with multimodal messages.
+// This is used when source/reference images are present so the model can "read" the image content.
+func (b *PromptBuilder) BuildChatRequest(userInput string) map[string]interface{} {
+	profile := b.Profile
+	prompt := b.Build(userInput)
+	modelID := profile.Model
+	if modelID == "" {
+		modelID = "gpt-4o-image"
+	}
+
+	content := make([]map[string]interface{}, 0, 1+len(b.SourceImageURLs)+len(profile.ReferenceImageURLs))
+
+	content = append(content, map[string]interface{}{
+		"type": "text",
+		"text": prompt,
+	})
+
+	for _, img := range b.SourceImageURLs {
+		content = append(content, map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]string{"url": img},
+		})
+	}
+
+	for _, refImg := range profile.ReferenceImageURLs {
+		content = append(content, map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]string{"url": refImg},
+		})
+	}
+
+	body := map[string]interface{}{
+		"model": modelID,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": content,
+			},
+		},
+	}
+
+	if b.ImageCount > 1 {
+		body["n"] = b.ImageCount
+	}
+
+	size := b.SizeOverride
+	if size == "" {
+		size = "auto"
+	}
+	if size != "auto" {
+		body["size"] = size
+	}
+
+	return body
+}
+
 func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{} {
 	profile := b.Profile
 	prompt := b.Build(userInput)
@@ -67,6 +124,17 @@ func (b *PromptBuilder) BuildAPIRequest(userInput string) map[string]interface{}
 		if size != "auto" {
 			body["size"] = size
 		}
+		if len(b.SourceImageURLs) == 1 {
+			body["image"] = b.SourceImageURLs[0]
+		} else if len(b.SourceImageURLs) > 1 {
+			body["images"] = b.SourceImageURLs
+		}
+		if b.ImageCount > 1 {
+			body["n"] = b.ImageCount
+		}
+		if len(profile.ReferenceImageURLs) > 0 {
+			body["reference_images"] = profile.ReferenceImageURLs
+		}
 	case model.ModelTypeGemini, model.ModelTypeBanana:
 		b.buildGeminiParams(body, profile, size, apiQuality)
 	case model.ModelTypeMJ:
@@ -87,8 +155,16 @@ func (b *PromptBuilder) buildGeminiParams(body map[string]interface{}, profile *
 	rf := "url"
 	body["response_format"] = rf
 
-	if profile.ReferenceImageURL != "" {
-		body["image"] = profile.ReferenceImageURL
+	if len(b.SourceImageURLs) == 1 {
+		body["image"] = b.SourceImageURLs[0]
+	} else if len(b.SourceImageURLs) > 1 {
+		body["images"] = b.SourceImageURLs
+	}
+	if b.ImageCount > 1 {
+		body["n"] = b.ImageCount
+	}
+	if len(profile.ReferenceImageURLs) > 0 {
+		body["reference_images"] = profile.ReferenceImageURLs
 	}
 
 	// Image size only for gemini-3-pro and nano-banana-2 variants

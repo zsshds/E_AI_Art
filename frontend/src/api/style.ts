@@ -5,14 +5,12 @@ export interface StyleProfile {
   name: string
   created_by: string
   version: number
-  is_locked: boolean
   model: string
   art_style: string
   color_tone: string
   extra_tokens: string[]
   project_id: string
-  reference_image_url: string
-  locked_prompt_prefix: string
+  reference_image_urls: string[]
   created_at?: string
   updated_at?: string
 }
@@ -32,10 +30,6 @@ export function createStyleProfile(data: Partial<StyleProfile>): Promise<StylePr
 
 export function updateStyleProfile(id: string, data: Partial<StyleProfile>): Promise<StyleProfile> {
   return put<StyleProfile>(`/style-profiles/${id}`, data)
-}
-
-export function lockStyleProfile(id: string): Promise<{ locked_prompt_prefix: string }> {
-  return put<{ locked_prompt_prefix: string }>(`/style-profiles/${id}/lock`, {})
 }
 
 export function previewStyleProfile(id: string, userInput: string): Promise<any> {

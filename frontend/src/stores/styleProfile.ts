@@ -1,13 +1,11 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import type { StyleProfile } from '../api/style'
 
 export const useStyleProfileStore = defineStore('styleProfile', () => {
   const profiles = ref<StyleProfile[]>([])
   const currentProfile = ref<StyleProfile | null>(null)
   const loading = ref(false)
-
-  const lockedProfiles = computed(() => profiles.value.filter(p => p.is_locked))
 
   function setProfiles(list: StyleProfile[]) {
     profiles.value = list
@@ -32,7 +30,6 @@ export const useStyleProfileStore = defineStore('styleProfile', () => {
     profiles,
     currentProfile,
     loading,
-    lockedProfiles,
     setProfiles,
     setCurrent,
     buildPromptPreview,

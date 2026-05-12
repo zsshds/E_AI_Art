@@ -215,21 +215,36 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	builder := prompt.NewPromptBuilder(profile)
 	builder.SizeOverride = task.Size
 	builder.QualityOverride = task.APIQuality
-	apiBody := builder.BuildAPIRequest(task.UserInput)
-	if msgs, ok := apiBody["messages"].([]map[string]string); ok && len(msgs) > 0 {
-		task.FinalPrompt = msgs[0]["content"]
-	} else if prompt, ok := apiBody["prompt"].(string); ok {
-		task.FinalPrompt = prompt
+	builder.SourceImageURLs = task.SourceImageURLs
+	builder.ImageCount = task.ImageCount
+
+	hasImages := len(task.SourceImageURLs) > 0 || len(profile.ReferenceImageURLs) > 0
+
+	var apiBody map[string]interface{}
+	if hasImages {
+		apiBody = builder.BuildChatRequest(task.UserInput)
+	} else {
+		apiBody = builder.BuildAPIRequest(task.UserInput)
+	}
+
+	// Extract FinalPrompt for logging and persistence
+	if msgs, ok := apiBody["messages"]; ok {
+		task.FinalPrompt = extractChatPrompt(msgs)
+	} else if p, ok := apiBody["prompt"].(string); ok {
+		task.FinalPrompt = p
+	}
+	if task.FinalPrompt != "" {
+		m.taskRepo.UpdateFinalPrompt(taskCtx, taskID, task.FinalPrompt)
 	}
 
 	log.Printf("[task %s] submitting task to platform, model=%s, prompt=%s", taskID, apiBody["model"], task.FinalPrompt)
 
-	// Submit async task to the platform
+	// Submit to the platform: chat completions for image-driven requests, image gen for text-only
 	var genResp *image.GenTaskResponse
 	var genErr error
 
-	if profile.ReferenceImageURL != "" {
-		genResp, genErr = m.imageClient.EditImageTask(taskCtx, apiBody)
+	if hasImages {
+		genResp, genErr = m.imageClient.ChatCompletion(taskCtx, apiBody)
 	} else {
 		genResp, genErr = m.imageClient.CreateImageTask(taskCtx, apiBody)
 	}
@@ -279,16 +294,63 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	m.pollTaskResult(taskCtx, taskID, platformTaskID)
 }
 
+func extractChatPrompt(msgsIface interface{}) string {
+	msgs, ok := msgsIface.([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, msgIface := range msgs {
+		msg, ok := msgIface.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := msg["content"]
+		if !ok {
+			continue
+		}
+		switch c := content.(type) {
+		case string:
+			return c
+		case []interface{}:
+			for _, partIface := range c {
+				part, ok := partIface.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if t, _ := part["type"].(string); t == "text" {
+					if text, _ := part["text"].(string); text != "" {
+						return text
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func extractImageURL(content string) string {
+	// Try markdown image syntax first: ![text](url)
+	if imgStart := strings.Index(content, "!["); imgStart != -1 {
+		if parenStart := strings.Index(content[imgStart:], "]("); parenStart != -1 {
+			urlStart := imgStart + parenStart + 2
+			if urlEnd := strings.Index(content[urlStart:], ")"); urlEnd != -1 {
+				return content[urlStart : urlStart+urlEnd]
+			}
+		}
+	}
+
+	// Fallback: find first http(s) URL, stop at space/newline/paren
 	start := strings.Index(content, "http")
 	if start == -1 {
 		return ""
 	}
-	end := strings.Index(content[start:], " ")
-	if end == -1 {
-		return content[start:]
+	remaining := content[start:]
+	for i, ch := range remaining {
+		if ch == ' ' || ch == '\n' || ch == '\r' || ch == ')' {
+			return remaining[:i]
+		}
 	}
-	return content[start : start+end]
+	return remaining
 }
 
 func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID string) {

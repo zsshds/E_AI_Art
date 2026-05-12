@@ -2,7 +2,7 @@ server:
   port: 8081
 
 mongodb:
-  uri: "mongodb://localhost:27017/imagegen"
+  uri: "mongodb://imagegen_app:changeme_app@localhost:27017/imagegen"
   database: imagegen
 
 rabbitmq:

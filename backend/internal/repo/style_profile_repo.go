@@ -86,23 +86,3 @@ func (r *StyleProfileRepo) Update(ctx context.Context, id string, profile *model
 	}
 	return nil
 }
-
-func (r *StyleProfileRepo) Lock(ctx context.Context, id string, lockedPromptPrefix string) error {
-	objID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return fmt.Errorf("invalid id: %w", err)
-	}
-
-	update := bson.M{
-		"$set": bson.M{
-			"is_locked":            true,
-			"locked_prompt_prefix": lockedPromptPrefix,
-			"updated_at":           time.Now(),
-		},
-	}
-	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
-	if err != nil {
-		return fmt.Errorf("lock style profile: %w", err)
-	}
-	return nil
-}

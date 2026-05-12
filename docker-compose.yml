@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── 基础设施 ──────────────────────────────────────────
   mongo:
@@ -36,6 +34,7 @@ services:
 
   # ── 应用服务 ──────────────────────────────────────────
   backend:
+    image: imagegen-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -52,6 +51,7 @@ services:
       - imagegen_net
 
   frontend:
+    image: imagegen-frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile

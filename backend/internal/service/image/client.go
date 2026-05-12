@@ -118,12 +118,13 @@ func NewClient(apiKey, baseURL string, settingRepo *repo.SettingRepo, timeoutSec
 }
 
 // resolveConfig reads dynamic settings from DB, falling back to config defaults.
-func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey, genPath, pollPath, bananaPath string) {
+func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey, genPath, pollPath, bananaPath, chatPath string) {
 	baseURL = c.baseURL
 	apiKey = c.apiKey
 	genPath = "/v1/images/generations/tasks"
 	pollPath = "/v1/images/tasks/"
 	bananaPath = "/v1/images/generations"
+	chatPath = "/v1/chat/completions"
 
 	if c.settingRepo != nil {
 		if v, err := c.settingRepo.Get(ctx, "api_base_url"); err == nil && v != "" {
@@ -138,13 +139,16 @@ func (c *Client) resolveConfig(ctx context.Context) (baseURL, apiKey, genPath, p
 		if v, err := c.settingRepo.Get(ctx, "api_poll_path"); err == nil && v != "" {
 			pollPath = v
 		}
+		if v, err := c.settingRepo.Get(ctx, "api_chat_path"); err == nil && v != "" {
+			chatPath = v
+		}
 	}
 	return
 }
 
 // CreateImageTask submits an async image generation task.
 func (c *Client) CreateImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
-	baseURL, apiKey, genPath, _, bananaPath := c.resolveConfig(ctx)
+	baseURL, apiKey, genPath, _, bananaPath, _ := c.resolveConfig(ctx)
 	modelID, _ := body["model"].(string)
 	if model.GetModelType(modelID) == model.ModelTypeBanana {
 		return c.postTask(ctx, baseURL+bananaPath, apiKey, body)
@@ -154,7 +158,7 @@ func (c *Client) CreateImageTask(ctx context.Context, body map[string]interface{
 
 // EditImageTask submits an async image edit task.
 func (c *Client) EditImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
-	baseURL, apiKey, genPath, _, bananaPath := c.resolveConfig(ctx)
+	baseURL, apiKey, genPath, _, bananaPath, _ := c.resolveConfig(ctx)
 	modelID, _ := body["model"].(string)
 	if model.GetModelType(modelID) == model.ModelTypeBanana {
 		return c.postTask(ctx, baseURL+bananaPath, apiKey, body)
@@ -162,15 +166,22 @@ func (c *Client) EditImageTask(ctx context.Context, body map[string]interface{})
 	return c.postTask(ctx, baseURL+genPath, apiKey, body)
 }
 
+// ChatCompletion sends a chat completions request. Used when source images are present
+// so the vision-capable model can "read" image content before generating.
+func (c *Client) ChatCompletion(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
+	baseURL, apiKey, _, _, _, chatPath := c.resolveConfig(ctx)
+	return c.postTask(ctx, baseURL+chatPath, apiKey, body)
+}
+
 // GetTaskResult polls for the result of an async task (skip for sync models).
 func (c *Client) GetTaskResult(ctx context.Context, taskID string) (*TaskResultResponse, error) {
-	baseURL, apiKey, _, pollPath, _ := c.resolveConfig(ctx)
+	baseURL, apiKey, _, pollPath, _, _ := c.resolveConfig(ctx)
 	return c.getTask(ctx, baseURL+pollPath+taskID, apiKey)
 }
 
 // ListModels fetches available models from the AI platform.
 func (c *Client) ListModels(ctx context.Context, path string) (*ListModelsResponse, error) {
-	baseURL, apiKey, _, _, _ := c.resolveConfig(ctx)
+	baseURL, apiKey, _, _, _, _ := c.resolveConfig(ctx)
 	fullURL := path
 	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
 		fullURL = baseURL + path
