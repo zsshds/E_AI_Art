@@ -14,8 +14,29 @@ export function getSettings(): Promise<AppSettings> {
   return get<AppSettings>('/settings')
 }
 
+const updatableSettingKeys = [
+  'api_base_url',
+  'api_key',
+  'api_generation_path',
+  'api_poll_path',
+  'available_models',
+  'model_fetch_url',
+  'model_filter_type',
+] as const
+
+function buildUpdatePayload(data: AppSettings): AppSettings {
+  const payload: AppSettings = {}
+  for (const key of updatableSettingKeys) {
+    const value = data[key]
+    if (value !== undefined) {
+      payload[key] = value
+    }
+  }
+  return payload
+}
+
 export function updateSettings(data: AppSettings): Promise<AppSettings> {
-  return put<AppSettings>('/settings', data)
+  return put<AppSettings>('/settings', buildUpdatePayload(data))
 }
 
 // --- Model list ---

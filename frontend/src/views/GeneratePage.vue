@@ -80,6 +80,31 @@ async function handleFileSelect(event: Event) {
   input.value = '' // reset so same file can be re-selected
 }
 
+async function handlePaste(e: ClipboardEvent) {
+  if (generating.value) return
+  const items = e.clipboardData?.items
+  if (!items || items.length === 0) return
+
+  const files: File[] = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.type.startsWith('image/')) {
+      const blob = item.getAsFile()
+      if (blob) {
+        // Generate a filename for clipboard images
+        const ext = item.type.split('/')[1] || 'png'
+        const file = new File([blob], `clipboard.${ext}`, { type: item.type })
+        files.push(file)
+      }
+    }
+  }
+
+  if (files.length > 0) {
+    e.preventDefault()
+    await processFiles(files)
+  }
+}
+
 async function processFiles(files: File[]) {
   const remaining = MAX_SOURCE_IMAGES - sourceImageDatas.value.length
   if (remaining <= 0) {
@@ -282,11 +307,13 @@ async function pollTask(taskId: string) {
           @dragover="handleDragOver"
           @dragleave="handleDragLeave"
           @drop="handleDrop"
+          @paste="handlePaste"
+          tabindex="0"
         >
           <!-- Upload placeholder (always visible when under limit) -->
           <div v-if="sourceImagePreviews.length < MAX_SOURCE_IMAGES" class="upload-placeholder">
             <span class="upload-icon">📁</span>
-            <p>拖拽图片到此处，或点击选择</p>
+            <p>拖拽图片到此处，点击选择，或 Ctrl+V 粘贴截图</p>
             <p class="upload-hint">支持 JPG / PNG / WebP，最大 10MB，最多 {{ MAX_SOURCE_IMAGES }} 张</p>
             <input
               ref="fileInput"

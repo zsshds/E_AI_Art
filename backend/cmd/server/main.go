@@ -35,8 +35,8 @@ func main() {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "config", "config.yaml"))
 	}
 	candidates = append(candidates,
-		"config/config.yaml",           // from backend/ dir
-		"backend/config/config.yaml",   // from project root
+		"config/config.yaml",         // from backend/ dir
+		"backend/config/config.yaml", // from project root
 	)
 
 	var cfg *config.Config
