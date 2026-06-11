@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -16,14 +18,18 @@ import (
 )
 
 type TaskHandler struct {
-	repo        *repo.TaskRepo
-	manager     *task.Manager
-	projectRepo *repo.ProjectRepo
-	styleRepo   *repo.StyleProfileRepo
+	repo               *repo.TaskRepo
+	manager            *task.Manager
+	projectRepo        *repo.ProjectRepo
+	styleRepo          *repo.StyleProfileRepo
+	downloadTimeoutSec int
 }
 
-func NewTaskHandler(repo *repo.TaskRepo, manager *task.Manager, projectRepo *repo.ProjectRepo, styleRepo *repo.StyleProfileRepo) *TaskHandler {
-	return &TaskHandler{repo: repo, manager: manager, projectRepo: projectRepo, styleRepo: styleRepo}
+func NewTaskHandler(repo *repo.TaskRepo, manager *task.Manager, projectRepo *repo.ProjectRepo, styleRepo *repo.StyleProfileRepo, downloadTimeoutSec int) *TaskHandler {
+	if downloadTimeoutSec <= 0 {
+		downloadTimeoutSec = 120
+	}
+	return &TaskHandler{repo: repo, manager: manager, projectRepo: projectRepo, styleRepo: styleRepo, downloadTimeoutSec: downloadTimeoutSec}
 }
 
 func (h *TaskHandler) Create(c echo.Context) error {
@@ -33,8 +39,8 @@ func (h *TaskHandler) Create(c echo.Context) error {
 		Model          string   `json:"model"`
 		Size           string   `json:"size"`
 		APIQuality     string   `json:"api_quality"`
-		SourceImage    string   `json:"source_image"`    // backward compat (single)
-		SourceImages   []string `json:"source_images"`   // new: multiple images
+		SourceImage    string   `json:"source_image"`  // backward compat (single)
+		SourceImages   []string `json:"source_images"` // new: multiple images
 		ImageCount     int      `json:"image_count"`
 	}
 
@@ -167,8 +173,15 @@ func (h *TaskHandler) Download(c echo.Context) error {
 		return fail(c, http.StatusNotFound, "no image available")
 	}
 
-	// Fetch the image from the platform
-	client := &http.Client{Timeout: 30 * time.Second}
+	if strings.HasPrefix(t.ResultImageURL, "data:") {
+		return h.downloadDataURL(c, id, t.ResultImageURL)
+	}
+
+	if !strings.HasPrefix(t.ResultImageURL, "http://") && !strings.HasPrefix(t.ResultImageURL, "https://") {
+		return fail(c, http.StatusBadRequest, "unsupported image url")
+	}
+
+	client := &http.Client{Timeout: time.Duration(h.downloadTimeoutSec) * time.Second}
 	resp, err := client.Get(t.ResultImageURL)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("fetch image: %v", err))
@@ -179,11 +192,52 @@ func (h *TaskHandler) Download(c echo.Context) error {
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("upstream image error %d", resp.StatusCode))
 	}
 
-	c.Response().Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, id[:8]))
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Response().Header().Set("Content-Type", contentType)
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, shortTaskID(id)))
 	c.Response().WriteHeader(http.StatusOK)
-	io.Copy(c.Response(), resp.Body)
+	_, _ = io.Copy(c.Response(), resp.Body)
 	return nil
+}
+
+func (h *TaskHandler) downloadDataURL(c echo.Context, id, dataURL string) error {
+	comma := strings.Index(dataURL, ",")
+	if comma <= len("data:") {
+		return fail(c, http.StatusBadRequest, "invalid data url")
+	}
+
+	meta := dataURL[len("data:"):comma]
+	payload := dataURL[comma+1:]
+	if !strings.Contains(meta, ";base64") {
+		return fail(c, http.StatusBadRequest, "unsupported data url encoding")
+	}
+
+	mimeType := strings.Split(meta, ";")[0]
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(payload)
+		if err != nil {
+			return fail(c, http.StatusBadRequest, "invalid data url payload")
+		}
+	}
+
+	c.Response().Header().Set("Content-Type", mimeType)
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, shortTaskID(id)))
+	return c.Blob(http.StatusOK, mimeType, decoded)
+}
+
+func shortTaskID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
 
 // Chat creates a child task for iterative editing. The parent task's result image

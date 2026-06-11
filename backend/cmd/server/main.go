@@ -63,7 +63,18 @@ func main() {
 	}
 	if v := os.Getenv("IMAGE_TASK_TIMEOUT_SECONDS"); v != "" {
 		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.TaskTimeoutSec = t
 			cfg.Worker.TimeoutSec = t
+		}
+	}
+	if v := os.Getenv("IMAGE_REQUEST_TIMEOUT_SECONDS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.ImageRequestTimeoutSec = t
+		}
+	}
+	if v := os.Getenv("TASK_DOWNLOAD_TIMEOUT_SECONDS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.DownloadTimeoutSec = t
 		}
 	}
 	if v := os.Getenv("TASK_MAX_RETRY"); v != "" {
@@ -71,6 +82,20 @@ func main() {
 			cfg.Worker.MaxRetry = r
 		}
 	}
+
+	if cfg.Worker.TaskTimeoutSec <= 0 {
+		cfg.Worker.TaskTimeoutSec = 300
+	}
+	if cfg.Worker.ImageRequestTimeoutSec <= 0 {
+		cfg.Worker.ImageRequestTimeoutSec = cfg.Worker.TaskTimeoutSec
+	}
+	if cfg.Worker.DownloadTimeoutSec <= 0 {
+		cfg.Worker.DownloadTimeoutSec = 120
+	}
+	if cfg.Worker.ImageRequestTimeoutSec > cfg.Worker.TaskTimeoutSec {
+		cfg.Worker.TaskTimeoutSec = cfg.Worker.ImageRequestTimeoutSec
+	}
+	cfg.Worker.TimeoutSec = cfg.Worker.TaskTimeoutSec
 
 	// MongoDB
 	mongoCtx, mongoCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -120,7 +145,7 @@ func main() {
 	}
 
 	// Services
-	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.TimeoutSec)
+	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.ImageRequestTimeoutSec)
 
 	// WebSocket Hub
 	hub := ws.NewHub()
@@ -133,7 +158,7 @@ func main() {
 		hub,
 		cfg.Worker.Concurrency,
 		cfg.Worker.MaxRetry,
-		cfg.Worker.TimeoutSec,
+		cfg.Worker.TaskTimeoutSec,
 	)
 	if err != nil {
 		log.Fatalf("connect to rabbitmq: %v", err)
@@ -168,7 +193,7 @@ func main() {
 	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo, projectRepo)
 	styleHandler.RegisterRoutes(api.Group("/style-profiles"))
 
-	taskHandler := handler.NewTaskHandler(taskRepo, taskManager, projectRepo, styleProfileRepo)
+	taskHandler := handler.NewTaskHandler(taskRepo, taskManager, projectRepo, styleProfileRepo, cfg.Worker.DownloadTimeoutSec)
 	taskHandler.RegisterRoutes(api.Group("/tasks"))
 
 	settingHandler := handler.NewSettingHandler(settingRepo, imageClient)

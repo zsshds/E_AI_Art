@@ -48,9 +48,12 @@ type OSSConfig struct {
 }
 
 type WorkerConfig struct {
-	Concurrency int `yaml:"concurrency"`
-	TimeoutSec  int `yaml:"timeout_sec"`
-	MaxRetry    int `yaml:"max_retry"`
+	Concurrency            int `yaml:"concurrency"`
+	TimeoutSec             int `yaml:"timeout_sec"` // backward compat
+	TaskTimeoutSec         int `yaml:"task_timeout_sec"`
+	ImageRequestTimeoutSec int `yaml:"image_request_timeout_sec"`
+	DownloadTimeoutSec     int `yaml:"download_timeout_sec"`
+	MaxRetry               int `yaml:"max_retry"`
 }
 
 func Load(path string) (*Config, error) {
@@ -66,15 +69,33 @@ func Load(path string) (*Config, error) {
 			Database: "imagegen",
 		},
 		Worker: WorkerConfig{
-			Concurrency: 5,
-			TimeoutSec:  150,
-			MaxRetry:    2,
+			Concurrency:            5,
+			TimeoutSec:             300,
+			TaskTimeoutSec:         300,
+			ImageRequestTimeoutSec: 600,
+			DownloadTimeoutSec:     120,
+			MaxRetry:               2,
 		},
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+
+	if cfg.Worker.TaskTimeoutSec <= 0 {
+		if cfg.Worker.TimeoutSec > 0 {
+			cfg.Worker.TaskTimeoutSec = cfg.Worker.TimeoutSec
+		} else {
+			cfg.Worker.TaskTimeoutSec = 300
+		}
+	}
+	if cfg.Worker.ImageRequestTimeoutSec <= 0 {
+		cfg.Worker.ImageRequestTimeoutSec = cfg.Worker.TaskTimeoutSec
+	}
+	if cfg.Worker.DownloadTimeoutSec <= 0 {
+		cfg.Worker.DownloadTimeoutSec = 120
+	}
+	cfg.Worker.TimeoutSec = cfg.Worker.TaskTimeoutSec
 
 	// 环境变量覆盖
 	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
