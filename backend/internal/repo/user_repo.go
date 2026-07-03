@@ -51,3 +51,25 @@ func (r *UserRepo) GetByID(ctx context.Context, id string) (*model.User, error) 
 	}
 	return &user, nil
 }
+
+func (r *UserRepo) List(ctx context.Context) ([]*model.User, error) {
+	cursor, err := r.col.Find(ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var users []*model.User
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func (r *UserRepo) DeleteByID(ctx context.Context, id string) error {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	_, err = r.col.DeleteOne(ctx, bson.M{"_id": objID})
+	return err
+}

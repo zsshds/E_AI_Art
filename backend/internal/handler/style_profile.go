@@ -71,48 +71,13 @@ func (h *StyleProfileHandler) List(c echo.Context) error {
 		if err != nil {
 			return fail(c, http.StatusInternalServerError, err.Error())
 		}
-		if profiles == nil {
-			profiles = []model.StyleProfile{}
-		}
 		return ok(c, profiles)
 	}
 
-	// User: get their project IDs
-	username := middleware.GetUsername(c)
-	userProjects, _ := h.projectRepo.GetProjectsForUser(ctx, username)
-	projectIDs := make([]string, 0, len(userProjects))
-	for _, p := range userProjects {
-		projectIDs = append(projectIDs, p.ID.Hex())
-	}
-
-	// Fetch profiles: user's own + from their projects
+	// Return all profiles for all authenticated users (admin sees all above)
 	profiles, err := h.repo.List(ctx, "", nil)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
-	}
-
-	// Filter to locked profiles belonging to user's projects (or user-created)
-	filtered := make([]model.StyleProfile, 0)
-	for _, p := range profiles {
-		if !p.IsLocked {
-			continue
-		}
-		// Show if: no project (public) OR project is in user's project list OR user created it
-		if p.ProjectID == "" {
-			filtered = append(filtered, p)
-		} else {
-			for _, pid := range projectIDs {
-				if p.ProjectID == pid {
-					filtered = append(filtered, p)
-					break
-				}
-			}
-		}
-	}
-	profiles = filtered
-
-	if profiles == nil {
-		profiles = []model.StyleProfile{}
 	}
 	return ok(c, profiles)
 }
@@ -124,10 +89,6 @@ func (h *StyleProfileHandler) Update(c echo.Context) error {
 		return fail(c, http.StatusNotFound, "style profile not found")
 	}
 
-	if existing.IsLocked {
-		return fail(c, http.StatusForbidden, "locked profile cannot be modified")
-	}
-
 	var updated model.StyleProfile
 	if err := c.Bind(&updated); err != nil {
 		return fail(c, http.StatusBadRequest, "invalid request body")
@@ -137,38 +98,12 @@ func (h *StyleProfileHandler) Update(c echo.Context) error {
 	updated.ID = existing.ID
 	updated.CreatedAt = existing.CreatedAt
 	updated.Version = existing.Version + 1
-	updated.IsLocked = existing.IsLocked
-	updated.LockedPromptPrefix = existing.LockedPromptPrefix
 
 	if err := h.repo.Update(c.Request().Context(), id, &updated); err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
 
 	return ok(c, updated)
-}
-
-func (h *StyleProfileHandler) Lock(c echo.Context) error {
-	id := c.Param("id")
-	profile, err := h.repo.GetByID(c.Request().Context(), id)
-	if err != nil {
-		return fail(c, http.StatusNotFound, "style profile not found")
-	}
-
-	if profile.IsLocked {
-		return fail(c, http.StatusForbidden, "profile already locked")
-	}
-
-	// Build the locked prompt prefix from current profile settings
-	builder := prompt.NewPromptBuilder(profile)
-	lockedPrefix := builder.Build("")
-
-	if err := h.repo.Lock(c.Request().Context(), id, lockedPrefix); err != nil {
-		return fail(c, http.StatusInternalServerError, err.Error())
-	}
-
-	return ok(c, map[string]string{
-		"locked_prompt_prefix": lockedPrefix,
-	})
 }
 
 func (h *StyleProfileHandler) Preview(c echo.Context) error {
@@ -198,7 +133,6 @@ func (h *StyleProfileHandler) RegisterRoutes(g *echo.Group) {
 	// Admin-only operations
 	g.POST("", h.Create, middleware.RequireAdmin())
 	g.PUT("/:id", h.Update, middleware.RequireAdmin())
-	g.PUT("/:id/lock", h.Lock, middleware.RequireAdmin())
 
 	// Authenticated operations (any role)
 	g.GET("", h.List)

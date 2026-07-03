@@ -20,6 +20,7 @@ function handleLogout() {
         <router-link to="/generate">生图</router-link>
         <router-link to="/tasks">任务队列</router-link>
         <router-link v-if="auth.isAdmin" to="/projects">项目管理</router-link>
+        <router-link v-if="auth.isAdmin" to="/users">用户管理</router-link>
         <router-link v-if="auth.isAdmin" to="/settings">系统设置</router-link>
       </nav>
       <div class="user-area">

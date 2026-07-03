@@ -1,6 +1,3 @@
-version: "3.9"
-
-# 生产覆盖配置：移除端口暴露、启用资源限制
 services:
   mongo:
     deploy:

@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -16,23 +18,30 @@ import (
 )
 
 type TaskHandler struct {
-	repo        *repo.TaskRepo
-	manager     *task.Manager
-	projectRepo *repo.ProjectRepo
-	styleRepo   *repo.StyleProfileRepo
+	repo               *repo.TaskRepo
+	manager            *task.Manager
+	projectRepo        *repo.ProjectRepo
+	styleRepo          *repo.StyleProfileRepo
+	downloadTimeoutSec int
 }
 
-func NewTaskHandler(repo *repo.TaskRepo, manager *task.Manager, projectRepo *repo.ProjectRepo, styleRepo *repo.StyleProfileRepo) *TaskHandler {
-	return &TaskHandler{repo: repo, manager: manager, projectRepo: projectRepo, styleRepo: styleRepo}
+func NewTaskHandler(repo *repo.TaskRepo, manager *task.Manager, projectRepo *repo.ProjectRepo, styleRepo *repo.StyleProfileRepo, downloadTimeoutSec int) *TaskHandler {
+	if downloadTimeoutSec <= 0 {
+		downloadTimeoutSec = 120
+	}
+	return &TaskHandler{repo: repo, manager: manager, projectRepo: projectRepo, styleRepo: styleRepo, downloadTimeoutSec: downloadTimeoutSec}
 }
 
 func (h *TaskHandler) Create(c echo.Context) error {
 	type CreateTaskRequest struct {
-		StyleProfileID string `json:"style_profile_id"`
-		UserInput      string `json:"user_input"`
-		Model          string `json:"model"`
-		Size           string `json:"size"`
-		APIQuality     string `json:"api_quality"`
+		StyleProfileID string   `json:"style_profile_id"`
+		UserInput      string   `json:"user_input"`
+		Model          string   `json:"model"`
+		Size           string   `json:"size"`
+		APIQuality     string   `json:"api_quality"`
+		SourceImage    string   `json:"source_image"`  // backward compat (single)
+		SourceImages   []string `json:"source_images"` // new: multiple images
+		ImageCount     int      `json:"image_count"`
 	}
 
 	var req CreateTaskRequest
@@ -50,6 +59,9 @@ func (h *TaskHandler) Create(c echo.Context) error {
 	if req.APIQuality == "" {
 		req.APIQuality = "medium"
 	}
+	if req.ImageCount < 1 || req.ImageCount > 10 {
+		req.ImageCount = 1
+	}
 
 	// Inherit project_id from style profile
 	projectID := ""
@@ -58,14 +70,25 @@ func (h *TaskHandler) Create(c echo.Context) error {
 		projectID = styleProfile.ProjectID
 	}
 
+	// Merge backward-compat single source_image into the array
+	sourceURLs := req.SourceImages
+	if req.SourceImage != "" {
+		sourceURLs = append(sourceURLs, req.SourceImage)
+	}
+	if sourceURLs == nil {
+		sourceURLs = []string{}
+	}
+
 	t := &model.Task{
-		StyleProfileID: styleProfileIDFromHex(req.StyleProfileID),
-		UserInput:      req.UserInput,
-		Model:          req.Model,
-		Size:           req.Size,
-		APIQuality:     req.APIQuality,
-		ProjectID:      projectID,
-		CreatedBy:      middleware.GetUsername(c),
+		StyleProfileID:  styleProfileIDFromHex(req.StyleProfileID),
+		UserInput:       req.UserInput,
+		Model:           req.Model,
+		Size:            req.Size,
+		APIQuality:      req.APIQuality,
+		ProjectID:       projectID,
+		CreatedBy:       middleware.GetUsername(c),
+		SourceImageURLs: sourceURLs,
+		ImageCount:      req.ImageCount,
 	}
 
 	if err := h.repo.Create(c.Request().Context(), t); err != nil {
@@ -99,10 +122,7 @@ func (h *TaskHandler) List(c echo.Context) error {
 		if err != nil {
 			return fail(c, http.StatusInternalServerError, err.Error())
 		}
-		if tasks == nil {
-			tasks = []model.Task{}
-		}
-		return ok(c, tasks)
+		return ok(c, summarizeTasksForList(tasks))
 	}
 
 	// User: get their project IDs
@@ -134,10 +154,20 @@ func (h *TaskHandler) List(c echo.Context) error {
 		}
 	}
 
-	if filtered == nil {
-		filtered = []model.Task{}
+	return ok(c, summarizeTasksForList(filtered))
+}
+
+func summarizeTasksForList(tasks []model.Task) []model.Task {
+	if tasks == nil {
+		return []model.Task{}
 	}
-	return ok(c, filtered)
+
+	summaries := make([]model.Task, len(tasks))
+	copy(summaries, tasks)
+	for i := range summaries {
+		summaries[i].SourceImageURLs = nil
+	}
+	return summaries
 }
 
 func (h *TaskHandler) Download(c echo.Context) error {
@@ -150,8 +180,15 @@ func (h *TaskHandler) Download(c echo.Context) error {
 		return fail(c, http.StatusNotFound, "no image available")
 	}
 
-	// Fetch the image from the platform
-	client := &http.Client{Timeout: 30 * time.Second}
+	if strings.HasPrefix(t.ResultImageURL, "data:") {
+		return h.downloadDataURL(c, id, t.ResultImageURL)
+	}
+
+	if !strings.HasPrefix(t.ResultImageURL, "http://") && !strings.HasPrefix(t.ResultImageURL, "https://") {
+		return fail(c, http.StatusBadRequest, "unsupported image url")
+	}
+
+	client := &http.Client{Timeout: time.Duration(h.downloadTimeoutSec) * time.Second}
 	resp, err := client.Get(t.ResultImageURL)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("fetch image: %v", err))
@@ -162,11 +199,125 @@ func (h *TaskHandler) Download(c echo.Context) error {
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("upstream image error %d", resp.StatusCode))
 	}
 
-	c.Response().Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, id[:8]))
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Response().Header().Set("Content-Type", contentType)
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, shortTaskID(id)))
 	c.Response().WriteHeader(http.StatusOK)
-	io.Copy(c.Response(), resp.Body)
+	_, _ = io.Copy(c.Response(), resp.Body)
 	return nil
+}
+
+func (h *TaskHandler) downloadDataURL(c echo.Context, id, dataURL string) error {
+	comma := strings.Index(dataURL, ",")
+	if comma <= len("data:") {
+		return fail(c, http.StatusBadRequest, "invalid data url")
+	}
+
+	meta := dataURL[len("data:"):comma]
+	payload := dataURL[comma+1:]
+	if !strings.Contains(meta, ";base64") {
+		return fail(c, http.StatusBadRequest, "unsupported data url encoding")
+	}
+
+	mimeType := strings.Split(meta, ";")[0]
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(payload)
+		if err != nil {
+			return fail(c, http.StatusBadRequest, "invalid data url payload")
+		}
+	}
+
+	c.Response().Header().Set("Content-Type", mimeType)
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, shortTaskID(id)))
+	return c.Blob(http.StatusOK, mimeType, decoded)
+}
+
+func shortTaskID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
+// Chat creates a child task for iterative editing. The parent task's result image
+// becomes the source image for the new task, forming a conversation chain.
+func (h *TaskHandler) Chat(c echo.Context) error {
+	parentID := c.Param("id")
+
+	type ChatRequest struct {
+		Message string `json:"message"`
+	}
+	var req ChatRequest
+	if err := c.Bind(&req); err != nil || req.Message == "" {
+		return fail(c, http.StatusBadRequest, "message is required")
+	}
+
+	ctx := c.Request().Context()
+
+	parent, err := h.repo.GetByID(ctx, parentID)
+	if err != nil {
+		return fail(c, http.StatusNotFound, "parent task not found")
+	}
+	if parent.Status != model.TaskStatusDone {
+		return fail(c, http.StatusConflict, "parent task is not completed yet")
+	}
+	if parent.ResultImageURL == "" {
+		return fail(c, http.StatusConflict, "parent task has no result image")
+	}
+
+	hasActive, err := h.repo.HasActiveChild(ctx, parentID)
+	if err != nil {
+		return fail(c, http.StatusInternalServerError, err.Error())
+	}
+	if hasActive {
+		return fail(c, http.StatusConflict, "this task already has a pending edit in progress")
+	}
+
+	// Verify style profile still exists
+	if _, err := h.styleRepo.GetByID(ctx, parent.StyleProfileID.Hex()); err != nil {
+		return fail(c, http.StatusNotFound, "style profile not found")
+	}
+
+	child := &model.Task{
+		StyleProfileID:  parent.StyleProfileID,
+		UserInput:       req.Message,
+		Model:           parent.Model,
+		Size:            parent.Size,
+		APIQuality:      parent.APIQuality,
+		SourceImageURLs: []string{parent.ResultImageURL},
+		ImageCount:      1,
+		ParentTaskID:    parent.ID,
+		ProjectID:       parent.ProjectID,
+		CreatedBy:       middleware.GetUsername(c),
+	}
+
+	if err := h.repo.Create(ctx, child); err != nil {
+		return fail(c, http.StatusInternalServerError, err.Error())
+	}
+
+	if err := h.manager.PublishTask(ctx, child.ID.Hex()); err != nil {
+		return fail(c, http.StatusInternalServerError, "failed to enqueue task")
+	}
+
+	return ok(c, child)
+}
+
+// GetConversation returns the full ancestor chain of a task ordered from root to leaf.
+func (h *TaskHandler) GetConversation(c echo.Context) error {
+	id := c.Param("id")
+	chain, err := h.repo.GetConversation(c.Request().Context(), id)
+	if err != nil {
+		return fail(c, http.StatusNotFound, "task not found")
+	}
+	return ok(c, chain)
 }
 
 func (h *TaskHandler) RegisterRoutes(g *echo.Group) {
@@ -174,6 +325,8 @@ func (h *TaskHandler) RegisterRoutes(g *echo.Group) {
 	g.GET("", h.List)
 	g.GET("/:id", h.GetByID)
 	g.GET("/:id/download", h.Download)
+	g.POST("/:id/chat", h.Chat)
+	g.GET("/:id/conversation", h.GetConversation)
 }
 
 func styleProfileIDFromHex(id string) primitive.ObjectID {

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import StyleForm from '../components/StyleForm.vue'
 import PromptPreview from '../components/PromptPreview.vue'
 import ImagePreviewGrid from '../components/ImagePreviewGrid.vue'
-import { listStyleProfiles, createStyleProfile, updateStyleProfile, lockStyleProfile, previewStyleProfile, type StyleProfile } from '../api/style'
+import { listStyleProfiles, createStyleProfile, updateStyleProfile, previewStyleProfile, type StyleProfile } from '../api/style'
 
 const profiles = ref<StyleProfile[]>([])
 const selectedId = ref<string | null>(null)
@@ -17,23 +17,16 @@ const emptyProfile = (): StyleProfile => ({
   name: '',
   created_by: '',
   version: 1,
-  is_locked: false,
   model: 'gpt-4o-image',
   art_style: '',
   color_tone: '',
   extra_tokens: [],
   project_id: '',
-  reference_image_url: '',
-  locked_prompt_prefix: '',
+  reference_image_urls: [],
 })
 
 const form = ref<StyleProfile>(emptyProfile())
 const editedForm = ref<StyleProfile>({ ...emptyProfile() })
-
-// 区域 A: 表单编辑
-watch(() => editedForm.value, (val) => {
-  // Reactive update handled by v-model
-}, { deep: true })
 
 onMounted(async () => {
   try {
@@ -45,14 +38,60 @@ onMounted(async () => {
 
 function selectProfile(profile: StyleProfile) {
   selectedId.value = profile.id!
-  form.value = { ...profile }
-  editedForm.value = { ...profile }
+  // Normalize fields that may be null from the API (Go nil slice → JSON null)
+  const normalized = {
+    ...profile,
+    extra_tokens: profile.extra_tokens || [],
+    reference_image_urls: profile.reference_image_urls || [],
+  }
+  form.value = { ...normalized }
+  editedForm.value = { ...normalized }
 }
 
 function createNew() {
   selectedId.value = null
   form.value = emptyProfile()
   editedForm.value = emptyProfile()
+}
+
+const importing = ref(false)
+
+function handleExport() {
+  if (!selectedId.value) return
+  const profile = profiles.value.find(p => p.id === selectedId.value)
+  if (!profile) return
+  const exportData = { ...profile }
+  delete (exportData as any).id
+  delete (exportData as any).created_at
+  delete (exportData as any).updated_at
+  delete (exportData as any).created_by
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${profile.name || 'style-profile'}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function handleImport(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    importing.value = true
+    const created = await createStyleProfile(data)
+    profiles.value = await listStyleProfiles()
+    selectProfile(created)
+  } catch {
+    alert('导入失败，请检查 JSON 格式')
+  } finally {
+    importing.value = false
+  }
 }
 
 async function handleSave() {
@@ -81,22 +120,6 @@ async function handleSave() {
   }
 }
 
-async function handleLock() {
-  if (!selectedId.value) return
-  saving.value = true
-  try {
-    await lockStyleProfile(selectedId.value)
-    profiles.value = await listStyleProfiles()
-    const p = profiles.value.find(p => p.id === selectedId.value)
-    if (p) {
-      form.value = { ...p }
-      editedForm.value = { ...p }
-    }
-  } finally {
-    saving.value = false
-  }
-}
-
 async function handlePreview() {
   if (!selectedId.value || !testInput.value.trim()) return
   previewing.value = true
@@ -117,16 +140,34 @@ async function handlePreview() {
     <div class="editor-sidebar">
       <h2>风格配置</h2>
       <button class="btn btn-primary" @click="createNew">+ 新建风格</button>
+      <div class="sidebar-actions">
+        <button
+          class="btn btn-sm"
+          @click="handleExport"
+          :disabled="!selectedId"
+          title="导出选中风格为 JSON"
+        >📤 导出</button>
+        <label class="btn btn-sm import-btn" :class="{ disabled: importing }" title="从 JSON 文件导入风格">
+          {{ importing ? '导入中...' : '📥 导入' }}
+          <input
+            type="file"
+            accept=".json"
+            class="import-file-input"
+            @change="handleImport"
+            :disabled="importing"
+          />
+        </label>
+      </div>
       <div class="profile-list">
         <div
           v-for="p in profiles"
           :key="p.id"
           class="profile-item"
-          :class="{ active: p.id === selectedId, locked: p.is_locked }"
+          :class="{ active: p.id === selectedId }"
           @click="selectProfile(p)"
         >
           <span>{{ p.name }}</span>
-          <small>{{ p.is_locked ? '🔒 已锁定' : `v${p.version}` }}</small>
+          <small>v{{ p.version }}</small>
         </div>
       </div>
     </div>
@@ -136,15 +177,8 @@ async function handlePreview() {
       <StyleForm v-if="selectedId || !selectedId" v-model="editedForm" />
       <div v-if="saveError" class="save-error">{{ saveError }}</div>
       <div class="form-actions">
-        <button class="btn btn-secondary" @click="handleSave" :disabled="saving || form.is_locked">
+        <button class="btn btn-primary" @click="handleSave" :disabled="saving">
           {{ saving ? '保存中...' : '保存' }}
-        </button>
-        <button
-          class="btn btn-primary"
-          @click="handleLock"
-          :disabled="saving || !selectedId || form.is_locked"
-        >
-          {{ form.is_locked ? '已锁定' : '保存并锁定' }}
         </button>
       </div>
     </div>
@@ -184,6 +218,29 @@ async function handlePreview() {
 .editor-sidebar h2 {
   font-size: 16px;
   margin-bottom: 12px;
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.sidebar-actions .btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+  flex: 1;
+  text-align: center;
+}
+.import-btn {
+  position: relative;
+  overflow: hidden;
+}
+.import-btn.disabled { opacity: 0.5; }
+.import-file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .profile-list {

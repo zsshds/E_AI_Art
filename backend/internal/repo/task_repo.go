@@ -137,3 +137,75 @@ func (r *TaskRepo) IncrementRetry(ctx context.Context, id string) error {
 	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	return err
 }
+
+// GetConversation walks the parent_task_id chain upward and returns tasks from root to the given task.
+func (r *TaskRepo) GetConversation(ctx context.Context, taskID string) ([]model.Task, error) {
+	const maxDepth = 50
+	ids := make([]primitive.ObjectID, 0, maxDepth)
+
+	currentID, err := primitive.ObjectIDFromHex(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid id: %w", err)
+	}
+	ids = append(ids, currentID)
+
+	for i := 0; i < maxDepth; i++ {
+		var task model.Task
+		err := r.collection.FindOne(ctx, bson.M{"_id": currentID}).Decode(&task)
+		if err != nil {
+			return nil, fmt.Errorf("find task %s: %w", currentID.Hex(), err)
+		}
+		if task.ParentTaskID.IsZero() {
+			break
+		}
+		currentID = task.ParentTaskID
+		ids = append(ids, currentID)
+	}
+
+	// Reverse so we return root-first
+	result := make([]model.Task, len(ids))
+	for i, id := range ids {
+		var task model.Task
+		err := r.collection.FindOne(ctx, bson.M{"_id": id}).Decode(&task)
+		if err != nil {
+			return nil, fmt.Errorf("find task %s: %w", id.Hex(), err)
+		}
+		result[len(ids)-1-i] = task
+	}
+
+	return result, nil
+}
+
+// HasActiveChild checks whether a task has a child task in pending or processing status.
+func (r *TaskRepo) HasActiveChild(ctx context.Context, parentID string) (bool, error) {
+	objID, err := primitive.ObjectIDFromHex(parentID)
+	if err != nil {
+		return false, fmt.Errorf("invalid id: %w", err)
+	}
+
+	count, err := r.collection.CountDocuments(ctx, bson.M{
+		"parent_task_id": objID,
+		"status":         bson.M{"$in": []string{"pending", "processing"}},
+	})
+	if err != nil {
+		return false, fmt.Errorf("count active children: %w", err)
+	}
+	return count > 0, nil
+}
+
+// UpdateFinalPrompt persists the generated final_prompt after prompt building.
+func (r *TaskRepo) UpdateFinalPrompt(ctx context.Context, id string, finalPrompt string) error {
+	objID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return fmt.Errorf("invalid id: %w", err)
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"final_prompt": finalPrompt,
+			"updated_at":   time.Now(),
+		},
+	}
+	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	return err
+}

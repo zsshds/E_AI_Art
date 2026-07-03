@@ -35,8 +35,8 @@ func main() {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "config", "config.yaml"))
 	}
 	candidates = append(candidates,
-		"config/config.yaml",           // from backend/ dir
-		"backend/config/config.yaml",   // from project root
+		"config/config.yaml",         // from backend/ dir
+		"backend/config/config.yaml", // from project root
 	)
 
 	var cfg *config.Config
@@ -63,7 +63,18 @@ func main() {
 	}
 	if v := os.Getenv("IMAGE_TASK_TIMEOUT_SECONDS"); v != "" {
 		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.TaskTimeoutSec = t
 			cfg.Worker.TimeoutSec = t
+		}
+	}
+	if v := os.Getenv("IMAGE_REQUEST_TIMEOUT_SECONDS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.ImageRequestTimeoutSec = t
+		}
+	}
+	if v := os.Getenv("TASK_DOWNLOAD_TIMEOUT_SECONDS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.DownloadTimeoutSec = t
 		}
 	}
 	if v := os.Getenv("TASK_MAX_RETRY"); v != "" {
@@ -71,6 +82,20 @@ func main() {
 			cfg.Worker.MaxRetry = r
 		}
 	}
+
+	if cfg.Worker.TaskTimeoutSec <= 0 {
+		cfg.Worker.TaskTimeoutSec = 300
+	}
+	if cfg.Worker.ImageRequestTimeoutSec <= 0 {
+		cfg.Worker.ImageRequestTimeoutSec = cfg.Worker.TaskTimeoutSec
+	}
+	if cfg.Worker.DownloadTimeoutSec <= 0 {
+		cfg.Worker.DownloadTimeoutSec = 120
+	}
+	if cfg.Worker.ImageRequestTimeoutSec > cfg.Worker.TaskTimeoutSec {
+		cfg.Worker.TaskTimeoutSec = cfg.Worker.ImageRequestTimeoutSec
+	}
+	cfg.Worker.TimeoutSec = cfg.Worker.TaskTimeoutSec
 
 	// MongoDB
 	mongoCtx, mongoCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -112,6 +137,21 @@ func main() {
 	if _, err := settingRepo.Get(context.Background(), "api_poll_path"); err != nil {
 		settingRepo.Set(context.Background(), "api_poll_path", "/v1/images/tasks/")
 	}
+	if _, err := settingRepo.Get(context.Background(), "api_chat_path"); err != nil {
+		settingRepo.Set(context.Background(), "api_chat_path", "/v1/chat/completions")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_generation_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_generation_url", "")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_poll_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_poll_url", "")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_chat_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_chat_url", "")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_banana_generation_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_banana_generation_url", "")
+	}
 	if _, err := settingRepo.Get(context.Background(), "model_fetch_url"); err != nil {
 		settingRepo.Set(context.Background(), "model_fetch_url", "/v1/models")
 	}
@@ -120,7 +160,7 @@ func main() {
 	}
 
 	// Services
-	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.TimeoutSec)
+	imageClient := image.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, settingRepo, cfg.Worker.ImageRequestTimeoutSec)
 
 	// WebSocket Hub
 	hub := ws.NewHub()
@@ -133,7 +173,7 @@ func main() {
 		hub,
 		cfg.Worker.Concurrency,
 		cfg.Worker.MaxRetry,
-		cfg.Worker.TimeoutSec,
+		cfg.Worker.TaskTimeoutSec,
 	)
 	if err != nil {
 		log.Fatalf("connect to rabbitmq: %v", err)
@@ -168,7 +208,7 @@ func main() {
 	styleHandler := handler.NewStyleProfileHandler(styleProfileRepo, projectRepo)
 	styleHandler.RegisterRoutes(api.Group("/style-profiles"))
 
-	taskHandler := handler.NewTaskHandler(taskRepo, taskManager, projectRepo, styleProfileRepo)
+	taskHandler := handler.NewTaskHandler(taskRepo, taskManager, projectRepo, styleProfileRepo, cfg.Worker.DownloadTimeoutSec)
 	taskHandler.RegisterRoutes(api.Group("/tasks"))
 
 	settingHandler := handler.NewSettingHandler(settingRepo, imageClient)
@@ -176,6 +216,9 @@ func main() {
 
 	projectHandler := handler.NewProjectHandler(projectRepo)
 	projectHandler.RegisterRoutes(api.Group("/projects"))
+
+	userHandler := handler.NewUserHandler(userRepo)
+	userHandler.RegisterRoutes(api.Group("/users", authmw.RequireAdmin()))
 
 	// WebSocket endpoint
 	e.GET("/ws/tasks/:id", func(c echo.Context) error {

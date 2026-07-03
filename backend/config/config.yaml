@@ -2,7 +2,7 @@ server:
   port: 8081
 
 mongodb:
-  uri: "mongodb://localhost:27017/imagegen"
+  uri: "mongodb://imagegen_app:changeme_app@localhost:27017/imagegen"
   database: imagegen
 
 rabbitmq:
@@ -20,7 +20,9 @@ oss:
 
 worker:
   concurrency: 5
-  timeout_sec: 150
+  task_timeout_sec: 300
+  image_request_timeout_sec: 600
+  download_timeout_sec: 120
   max_retry: 2
 
 auth:

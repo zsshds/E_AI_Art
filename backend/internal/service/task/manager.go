@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -18,7 +19,9 @@ import (
 )
 
 type Manager struct {
+	rabbitURI        string
 	rabbitConn       *amqp.Connection
+	rabbitMu         sync.Mutex
 	imageClient      *image.Client
 	taskRepo         *repo.TaskRepo
 	styleProfileRepo *repo.StyleProfileRepo
@@ -39,6 +42,7 @@ func NewManager(rabbitURI string, imageClient *image.Client, taskRepo *repo.Task
 	}
 
 	m := &Manager{
+		rabbitURI:        rabbitURI,
 		rabbitConn:       conn,
 		imageClient:      imageClient,
 		taskRepo:         taskRepo,
@@ -96,8 +100,58 @@ func (m *Manager) declareTopology() error {
 	return nil
 }
 
-func (m *Manager) PublishTask(ctx context.Context, taskID string) error {
+func (m *Manager) openChannel() (*amqp.Channel, error) {
 	ch, err := m.rabbitConn.Channel()
+	if err == nil {
+		return ch, nil
+	}
+	if !isAMQPConnectionClosedError(err) {
+		return nil, err
+	}
+
+	if reconnectErr := m.reconnectRabbitMQ(); reconnectErr != nil {
+		return nil, reconnectErr
+	}
+	return m.rabbitConn.Channel()
+}
+
+func (m *Manager) reconnectRabbitMQ() error {
+	m.rabbitMu.Lock()
+	defer m.rabbitMu.Unlock()
+
+	if m.rabbitConn != nil {
+		if ch, err := m.rabbitConn.Channel(); err == nil {
+			ch.Close()
+			return nil
+		}
+		_ = m.rabbitConn.Close()
+	}
+
+	conn, err := amqp.Dial(m.rabbitURI)
+	if err != nil {
+		return fmt.Errorf("reconnect rabbitmq: %w", err)
+	}
+	m.rabbitConn = conn
+	if err := m.declareTopology(); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("declare topology after reconnect: %w", err)
+	}
+	log.Println("rabbitmq connection re-established")
+	return nil
+}
+
+func isAMQPConnectionClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "channel/connection is not open") ||
+		strings.Contains(msg, "connection is not open") ||
+		strings.Contains(msg, "exception (504)")
+}
+
+func (m *Manager) PublishTask(ctx context.Context, taskID string) error {
+	ch, err := m.openChannel()
 	if err != nil {
 		return fmt.Errorf("open channel: %w", err)
 	}
@@ -151,7 +205,7 @@ func (m *Manager) worker(ctx context.Context, id int) {
 }
 
 func (m *Manager) consumeOne(ctx context.Context, id int) error {
-	ch, err := m.rabbitConn.Channel()
+	ch, err := m.openChannel()
 	if err != nil {
 		return fmt.Errorf("open channel: %w", err)
 	}
@@ -167,6 +221,11 @@ func (m *Manager) consumeOne(ctx context.Context, id int) error {
 		return fmt.Errorf("get message: %w", err)
 	}
 	if !ok {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 		return nil // no message available
 	}
 
@@ -215,21 +274,36 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	builder := prompt.NewPromptBuilder(profile)
 	builder.SizeOverride = task.Size
 	builder.QualityOverride = task.APIQuality
-	apiBody := builder.BuildAPIRequest(task.UserInput)
-	if msgs, ok := apiBody["messages"].([]map[string]string); ok && len(msgs) > 0 {
-		task.FinalPrompt = msgs[0]["content"]
-	} else if prompt, ok := apiBody["prompt"].(string); ok {
-		task.FinalPrompt = prompt
+	builder.SourceImageURLs = task.SourceImageURLs
+	builder.ImageCount = task.ImageCount
+
+	hasImages := len(task.SourceImageURLs) > 0 || len(profile.ReferenceImageURLs) > 0
+
+	var apiBody map[string]interface{}
+	if hasImages {
+		apiBody = builder.BuildChatRequest(task.UserInput)
+	} else {
+		apiBody = builder.BuildAPIRequest(task.UserInput)
+	}
+
+	// Extract FinalPrompt for logging and persistence
+	if msgs, ok := apiBody["messages"]; ok {
+		task.FinalPrompt = extractChatPrompt(msgs)
+	} else if p, ok := apiBody["prompt"].(string); ok {
+		task.FinalPrompt = p
+	}
+	if task.FinalPrompt != "" {
+		m.taskRepo.UpdateFinalPrompt(taskCtx, taskID, task.FinalPrompt)
 	}
 
 	log.Printf("[task %s] submitting task to platform, model=%s, prompt=%s", taskID, apiBody["model"], task.FinalPrompt)
 
-	// Submit async task to the platform
+	// Submit to the platform: chat completions for image-driven requests, image gen for text-only
 	var genResp *image.GenTaskResponse
 	var genErr error
 
-	if profile.ReferenceImageURL != "" {
-		genResp, genErr = m.imageClient.EditImageTask(taskCtx, apiBody)
+	if hasImages {
+		genResp, genErr = m.imageClient.ChatCompletion(taskCtx, apiBody)
 	} else {
 		genResp, genErr = m.imageClient.CreateImageTask(taskCtx, apiBody)
 	}
@@ -263,6 +337,9 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 		platformTaskID = genResp.Tasks[0].ID
 	} else if len(genResp.Data) > 0 {
 		imageURL := genResp.Data[0].URL
+		if imageURL == "" && genResp.Data[0].B64JSON != "" {
+			imageURL = "data:image/png;base64," + genResp.Data[0].B64JSON
+		}
 		m.taskRepo.UpdateResult(taskCtx, taskID, imageURL)
 		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "done", ResultImageURL: imageURL, Progress: 100})
 		log.Printf("[task %s] completed synchronously", taskID)
@@ -279,16 +356,63 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	m.pollTaskResult(taskCtx, taskID, platformTaskID)
 }
 
+func extractChatPrompt(msgsIface interface{}) string {
+	msgs, ok := msgsIface.([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, msgIface := range msgs {
+		msg, ok := msgIface.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := msg["content"]
+		if !ok {
+			continue
+		}
+		switch c := content.(type) {
+		case string:
+			return c
+		case []interface{}:
+			for _, partIface := range c {
+				part, ok := partIface.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if t, _ := part["type"].(string); t == "text" {
+					if text, _ := part["text"].(string); text != "" {
+						return text
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func extractImageURL(content string) string {
+	// Try markdown image syntax first: ![text](url)
+	if imgStart := strings.Index(content, "!["); imgStart != -1 {
+		if parenStart := strings.Index(content[imgStart:], "]("); parenStart != -1 {
+			urlStart := imgStart + parenStart + 2
+			if urlEnd := strings.Index(content[urlStart:], ")"); urlEnd != -1 {
+				return content[urlStart : urlStart+urlEnd]
+			}
+		}
+	}
+
+	// Fallback: find first http(s) URL, stop at space/newline/paren
 	start := strings.Index(content, "http")
 	if start == -1 {
 		return ""
 	}
-	end := strings.Index(content[start:], " ")
-	if end == -1 {
-		return content[start:]
+	remaining := content[start:]
+	for i, ch := range remaining {
+		if ch == ' ' || ch == '\n' || ch == '\r' || ch == ')' {
+			return remaining[:i]
+		}
 	}
-	return content[start : start+end]
+	return remaining
 }
 
 func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID string) {
@@ -325,6 +449,9 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 		case result.Status == image.TaskStatusSuccess:
 			if len(result.Data) > 0 {
 				imageURL := result.Data[0].URL
+				if imageURL == "" && result.Data[0].B64JSON != "" {
+					imageURL = "data:image/png;base64," + result.Data[0].B64JSON
+				}
 				m.taskRepo.UpdateResult(context.Background(), taskID, imageURL)
 				m.wsHub.PushUpdate(taskID, ws.TaskUpdate{
 					TaskID:         taskID,

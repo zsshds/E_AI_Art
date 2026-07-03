@@ -135,13 +135,43 @@ async function handleSave() {
       <div class="form-group">
         <label>生图端点 Path</label>
         <input v-model="settings.api_generation_path" type="text" placeholder="/v1/images/generations/tasks" class="text-input" />
-        <small>提交生图任务的端点路径</small>
+        <small>相对路径模式下，提交文生图任务的端点路径</small>
+      </div>
+
+      <div class="form-group">
+        <label>生图端点完整 URL（优先）</label>
+        <input v-model="settings.api_generation_url" type="text" placeholder="https://your-platform.example.com/v1/images/generations" class="text-input" />
+        <small>如第三方平台接口不遵循统一 Base URL + Path，可直接填完整地址；填写后会优先生效</small>
       </div>
 
       <div class="form-group">
         <label>轮询端点 Path</label>
         <input v-model="settings.api_poll_path" type="text" placeholder="/v1/images/tasks/" class="text-input" />
-        <small>查询任务结果的端点路径（末尾的 / 保留）</small>
+        <small>相对路径模式下，查询任务结果的端点路径；末尾的 / 可不填</small>
+      </div>
+
+      <div class="form-group">
+        <label>轮询端点完整 URL（优先）</label>
+        <input v-model="settings.api_poll_url" type="text" placeholder="https://your-platform.example.com/v1/images/tasks" class="text-input" />
+        <small>填写后会直接用该地址作为任务查询前缀，系统会自动拼接 task_id</small>
+      </div>
+
+      <div class="form-group">
+        <label>Chat 端点 Path</label>
+        <input v-model="settings.api_chat_path" type="text" placeholder="/v1/chat/completions" class="text-input" />
+        <small>带参考图/对话式生成时使用的相对路径</small>
+      </div>
+
+      <div class="form-group">
+        <label>Chat 端点完整 URL（优先）</label>
+        <input v-model="settings.api_chat_url" type="text" placeholder="https://your-platform.example.com/v1/chat/completions" class="text-input" />
+        <small>如图生图或带图提示走独立网关，可在此配置完整地址</small>
+      </div>
+
+      <div class="form-group">
+        <label>Banana 模型完整 URL（优先）</label>
+        <input v-model="settings.api_banana_generation_url" type="text" placeholder="https://your-platform.example.com/v1/images/generations" class="text-input" />
+        <small>仅 Banana 类模型使用；留空则继续跟随生图端点/默认逻辑</small>
       </div>
 
       <!-- Model management section -->
