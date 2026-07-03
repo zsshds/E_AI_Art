@@ -39,13 +39,18 @@ func (h *SettingHandler) Update(c echo.Context) error {
 	}
 
 	allowedKeys := map[string]bool{
-		"api_base_url":        true,
-		"api_key":             true,
-		"api_generation_path": true,
-		"api_poll_path":       true,
-		"available_models":    true,
-		"model_fetch_url":     true,
-		"model_filter_type":   true,
+		"api_base_url":              true,
+		"api_key":                   true,
+		"api_generation_path":       true,
+		"api_generation_url":        true,
+		"api_poll_path":             true,
+		"api_poll_url":              true,
+		"api_chat_path":             true,
+		"api_chat_url":              true,
+		"api_banana_generation_url": true,
+		"available_models":          true,
+		"model_fetch_url":           true,
+		"model_filter_type":         true,
 	}
 
 	for key, value := range req {
@@ -143,17 +148,17 @@ func (h *SettingHandler) GetAvailableModels(c echo.Context) error {
 func formatModelLabel(id string) string {
 	// Known labels
 	known := map[string]string{
-		"gpt-4o-image":                "GPT-4o Image",
-		"gpt-4o-image-vip":            "GPT-4o Image VIP",
-		"gpt-image-2":                 "GPT Image 2",
-		"gpt-image-1.5":               "GPT Image 1.5",
-		"gemini-3-pro-image-preview":  "Gemini 3 Pro",
-		"gemini-2.5-flash-image":      "Gemini 2.5 Flash",
-		"nano-banana-pro":             "Nano Banana Pro",
-		"nano-banana-2":               "Nano Banana 2",
-		"nano-banana-2-2k":            "Nano Banana 2 (2K)",
-		"nano-banana-2-4k":            "Nano Banana 2 (4K)",
-		"mj_imagine":                  "Midjourney Imagine",
+		"gpt-4o-image":               "GPT-4o Image",
+		"gpt-4o-image-vip":           "GPT-4o Image VIP",
+		"gpt-image-2":                "GPT Image 2",
+		"gpt-image-1.5":              "GPT Image 1.5",
+		"gemini-3-pro-image-preview": "Gemini 3 Pro",
+		"gemini-2.5-flash-image":     "Gemini 2.5 Flash",
+		"nano-banana-pro":            "Nano Banana Pro",
+		"nano-banana-2":              "Nano Banana 2",
+		"nano-banana-2-2k":           "Nano Banana 2 (2K)",
+		"nano-banana-2-4k":           "Nano Banana 2 (4K)",
+		"mj_imagine":                 "Midjourney Imagine",
 	}
 	if label, ok := known[id]; ok {
 		return label

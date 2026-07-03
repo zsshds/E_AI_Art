@@ -137,6 +137,21 @@ func main() {
 	if _, err := settingRepo.Get(context.Background(), "api_poll_path"); err != nil {
 		settingRepo.Set(context.Background(), "api_poll_path", "/v1/images/tasks/")
 	}
+	if _, err := settingRepo.Get(context.Background(), "api_chat_path"); err != nil {
+		settingRepo.Set(context.Background(), "api_chat_path", "/v1/chat/completions")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_generation_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_generation_url", "")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_poll_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_poll_url", "")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_chat_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_chat_url", "")
+	}
+	if _, err := settingRepo.Get(context.Background(), "api_banana_generation_url"); err != nil {
+		settingRepo.Set(context.Background(), "api_banana_generation_url", "")
+	}
 	if _, err := settingRepo.Get(context.Background(), "model_fetch_url"); err != nil {
 		settingRepo.Set(context.Background(), "model_fetch_url", "/v1/models")
 	}

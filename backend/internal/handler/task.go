@@ -122,10 +122,7 @@ func (h *TaskHandler) List(c echo.Context) error {
 		if err != nil {
 			return fail(c, http.StatusInternalServerError, err.Error())
 		}
-		if tasks == nil {
-			tasks = []model.Task{}
-		}
-		return ok(c, tasks)
+		return ok(c, summarizeTasksForList(tasks))
 	}
 
 	// User: get their project IDs
@@ -157,10 +154,20 @@ func (h *TaskHandler) List(c echo.Context) error {
 		}
 	}
 
-	if filtered == nil {
-		filtered = []model.Task{}
+	return ok(c, summarizeTasksForList(filtered))
+}
+
+func summarizeTasksForList(tasks []model.Task) []model.Task {
+	if tasks == nil {
+		return []model.Task{}
 	}
-	return ok(c, filtered)
+
+	summaries := make([]model.Task, len(tasks))
+	copy(summaries, tasks)
+	for i := range summaries {
+		summaries[i].SourceImageURLs = nil
+	}
+	return summaries
 }
 
 func (h *TaskHandler) Download(c echo.Context) error {

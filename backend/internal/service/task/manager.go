@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -18,7 +19,9 @@ import (
 )
 
 type Manager struct {
+	rabbitURI        string
 	rabbitConn       *amqp.Connection
+	rabbitMu         sync.Mutex
 	imageClient      *image.Client
 	taskRepo         *repo.TaskRepo
 	styleProfileRepo *repo.StyleProfileRepo
@@ -39,6 +42,7 @@ func NewManager(rabbitURI string, imageClient *image.Client, taskRepo *repo.Task
 	}
 
 	m := &Manager{
+		rabbitURI:        rabbitURI,
 		rabbitConn:       conn,
 		imageClient:      imageClient,
 		taskRepo:         taskRepo,
@@ -96,8 +100,58 @@ func (m *Manager) declareTopology() error {
 	return nil
 }
 
-func (m *Manager) PublishTask(ctx context.Context, taskID string) error {
+func (m *Manager) openChannel() (*amqp.Channel, error) {
 	ch, err := m.rabbitConn.Channel()
+	if err == nil {
+		return ch, nil
+	}
+	if !isAMQPConnectionClosedError(err) {
+		return nil, err
+	}
+
+	if reconnectErr := m.reconnectRabbitMQ(); reconnectErr != nil {
+		return nil, reconnectErr
+	}
+	return m.rabbitConn.Channel()
+}
+
+func (m *Manager) reconnectRabbitMQ() error {
+	m.rabbitMu.Lock()
+	defer m.rabbitMu.Unlock()
+
+	if m.rabbitConn != nil {
+		if ch, err := m.rabbitConn.Channel(); err == nil {
+			ch.Close()
+			return nil
+		}
+		_ = m.rabbitConn.Close()
+	}
+
+	conn, err := amqp.Dial(m.rabbitURI)
+	if err != nil {
+		return fmt.Errorf("reconnect rabbitmq: %w", err)
+	}
+	m.rabbitConn = conn
+	if err := m.declareTopology(); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("declare topology after reconnect: %w", err)
+	}
+	log.Println("rabbitmq connection re-established")
+	return nil
+}
+
+func isAMQPConnectionClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "channel/connection is not open") ||
+		strings.Contains(msg, "connection is not open") ||
+		strings.Contains(msg, "exception (504)")
+}
+
+func (m *Manager) PublishTask(ctx context.Context, taskID string) error {
+	ch, err := m.openChannel()
 	if err != nil {
 		return fmt.Errorf("open channel: %w", err)
 	}
@@ -151,7 +205,7 @@ func (m *Manager) worker(ctx context.Context, id int) {
 }
 
 func (m *Manager) consumeOne(ctx context.Context, id int) error {
-	ch, err := m.rabbitConn.Channel()
+	ch, err := m.openChannel()
 	if err != nil {
 		return fmt.Errorf("open channel: %w", err)
 	}
@@ -167,6 +221,11 @@ func (m *Manager) consumeOne(ctx context.Context, id int) error {
 		return fmt.Errorf("get message: %w", err)
 	}
 	if !ok {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 		return nil // no message available
 	}
 
@@ -278,6 +337,9 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 		platformTaskID = genResp.Tasks[0].ID
 	} else if len(genResp.Data) > 0 {
 		imageURL := genResp.Data[0].URL
+		if imageURL == "" && genResp.Data[0].B64JSON != "" {
+			imageURL = "data:image/png;base64," + genResp.Data[0].B64JSON
+		}
 		m.taskRepo.UpdateResult(taskCtx, taskID, imageURL)
 		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "done", ResultImageURL: imageURL, Progress: 100})
 		log.Printf("[task %s] completed synchronously", taskID)
@@ -387,6 +449,9 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 		case result.Status == image.TaskStatusSuccess:
 			if len(result.Data) > 0 {
 				imageURL := result.Data[0].URL
+				if imageURL == "" && result.Data[0].B64JSON != "" {
+					imageURL = "data:image/png;base64," + result.Data[0].B64JSON
+				}
 				m.taskRepo.UpdateResult(context.Background(), taskID, imageURL)
 				m.wsHub.PushUpdate(taskID, ws.TaskUpdate{
 					TaskID:         taskID,
