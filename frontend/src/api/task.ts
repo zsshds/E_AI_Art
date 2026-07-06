@@ -21,6 +21,14 @@ export interface Task {
   parent_task_id?: string
 }
 
+export interface TaskListResponse {
+  items: Task[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
 export function createTask(styleProfileId: string, userInput: string, model?: string, size?: string, apiQuality?: string, sourceImages?: string[], imageCount?: number): Promise<Task> {
   return post<Task>('/tasks', {
     style_profile_id: styleProfileId,
@@ -37,9 +45,14 @@ export function getTask(id: string): Promise<Task> {
   return get<Task>(`/tasks/${id}`)
 }
 
-export function listTasks(createdBy?: string): Promise<Task[]> {
-  const query = createdBy ? `?created_by=${encodeURIComponent(createdBy)}` : ''
-  return get<Task[]>(`/tasks${query}`)
+export function listTasks(params?: { createdBy?: string; status?: string; page?: number; pageSize?: number }): Promise<TaskListResponse> {
+  const query = new URLSearchParams()
+  if (params?.createdBy) query.set('created_by', params.createdBy)
+  if (params?.status && params.status !== 'all') query.set('status', params.status)
+  if (params?.page) query.set('page', String(params.page))
+  if (params?.pageSize) query.set('page_size', String(params.pageSize))
+  const queryString = query.toString()
+  return get<TaskListResponse>(`/tasks${queryString ? `?${queryString}` : ''}`)
 }
 
 export function subscribeTask(taskId: string, onUpdate: (data: any) => void): () => void {

@@ -13,6 +13,12 @@ import (
 	"github.com/imagegen/backend/internal/model"
 )
 
+const (
+	DefaultTaskListPage     = 1
+	DefaultTaskListPageSize = 20
+	MaxTaskListPageSize     = 100
+)
+
 type TaskRepo struct {
 	collection *mongo.Collection
 }
@@ -51,27 +57,40 @@ func (r *TaskRepo) GetByID(ctx context.Context, id string) (*model.Task, error) 
 	return &task, nil
 }
 
-func (r *TaskRepo) List(ctx context.Context, createdBy string, projectIDs []string) ([]model.Task, error) {
-	filter := bson.M{}
-	if createdBy != "" {
-		filter["created_by"] = createdBy
+func (r *TaskRepo) List(ctx context.Context, filter bson.M, page, pageSize int) ([]model.Task, int64, error) {
+	if filter == nil {
+		filter = bson.M{}
 	}
-	if len(projectIDs) > 0 {
-		filter["project_id"] = bson.M{"$in": projectIDs}
+	if page <= 0 {
+		page = DefaultTaskListPage
+	}
+	if pageSize <= 0 {
+		pageSize = DefaultTaskListPageSize
+	}
+	if pageSize > MaxTaskListPageSize {
+		pageSize = MaxTaskListPageSize
 	}
 
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
+	total, err := r.collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count tasks: %w", err)
+	}
+
+	opts := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetSkip(int64((page - 1) * pageSize)).
+		SetLimit(int64(pageSize))
 	cursor, err := r.collection.Find(ctx, filter, opts)
 	if err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
+		return nil, 0, fmt.Errorf("list tasks: %w", err)
 	}
 	defer cursor.Close(ctx)
 
 	var tasks []model.Task
 	if err := cursor.All(ctx, &tasks); err != nil {
-		return nil, fmt.Errorf("decode tasks: %w", err)
+		return nil, 0, fmt.Errorf("decode tasks: %w", err)
 	}
-	return tasks, nil
+	return tasks, total, nil
 }
 
 func (r *TaskRepo) UpdateStatus(ctx context.Context, id string, status model.TaskStatus) error {
