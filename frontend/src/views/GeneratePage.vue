@@ -46,6 +46,8 @@ const sourceImageDatas = ref<string[]>([])
 const sourceImagePreviews = ref<string[]>([])
 const isDragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const uploadLimitDialogVisible = ref(false)
+const uploadLimitDialogMessage = ref('')
 const error = ref('')
 let unsubscribe: (() => void) | null = null
 
@@ -112,13 +114,15 @@ async function processFiles(files: File[]) {
     return
   }
   const toAdd = files.slice(0, remaining)
+  const oversizeFile = toAdd.find(file => file.size > 10 * 1024 * 1024)
+  if (oversizeFile) {
+    uploadLimitDialogMessage.value = `图片 ${oversizeFile.name} 超过 10MB，已取消本次上传。`
+    uploadLimitDialogVisible.value = true
+    return
+  }
   for (const file of toAdd) {
     if (!file.type.startsWith('image/')) {
       alert(`文件 ${file.name} 不是图片格式`)
-      continue
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      alert(`图片 ${file.name} 大小超过 10MB`)
       continue
     }
     try {
@@ -153,6 +157,11 @@ function handleRemoveImage(index: number) {
   const preview = sourceImagePreviews.value[index]
   if (preview) URL.revokeObjectURL(preview)
   sourceImagePreviews.value.splice(index, 1)
+}
+
+function closeUploadLimitDialog() {
+  uploadLimitDialogVisible.value = false
+  uploadLimitDialogMessage.value = ''
 }
 
 async function handleDownload() {
@@ -383,6 +392,14 @@ async function pollTask(taskId: string) {
         <p>生成的图片将显示在这里</p>
       </div>
     </div>
+
+    <div v-if="uploadLimitDialogVisible" class="dialog-backdrop" @click.self="closeUploadLimitDialog">
+      <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="upload-limit-title">
+        <h3 id="upload-limit-title">上传失败</h3>
+        <p>{{ uploadLimitDialogMessage }}</p>
+        <button class="btn btn-primary" @click="closeUploadLimitDialog">确认</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -510,6 +527,38 @@ textarea.text-input {
 .btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); }
 
 .hint { font-weight: 400; font-size: 12px; color: var(--color-text-muted); }
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.dialog-card {
+  width: min(420px, 100%);
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+  padding: 24px;
+  border: 1px solid var(--color-border);
+}
+
+.dialog-card h3 {
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+.dialog-card p {
+  font-size: 14px;
+  color: var(--color-text);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
 
 .upload-area {
   border: 2px dashed var(--color-border);
