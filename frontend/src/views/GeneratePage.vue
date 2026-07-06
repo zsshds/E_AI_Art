@@ -50,6 +50,7 @@ const uploadLimitDialogVisible = ref(false)
 const uploadLimitDialogMessage = ref('')
 const error = ref('')
 let unsubscribe: (() => void) | null = null
+let resultImageObjectURL: string | null = null
 
 onMounted(async () => {
   try {
@@ -61,6 +62,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unsubscribe?.()
+  if (resultImageObjectURL) {
+    URL.revokeObjectURL(resultImageObjectURL)
+  }
 })
 
 const downloading = ref(false)
@@ -128,7 +132,7 @@ async function processFiles(files: File[]) {
     try {
       const data = await readFileAsBase64(file)
       sourceImageDatas.value.push(data)
-      sourceImagePreviews.value.push(URL.createObjectURL(file))
+      sourceImagePreviews.value.push(data)
     } catch {
       alert(`读取图片 ${file.name} 失败`)
     }
@@ -154,8 +158,6 @@ async function handleDrop(e: DragEvent) {
 
 function handleRemoveImage(index: number) {
   sourceImageDatas.value.splice(index, 1)
-  const preview = sourceImagePreviews.value[index]
-  if (preview) URL.revokeObjectURL(preview)
   sourceImagePreviews.value.splice(index, 1)
 }
 
@@ -189,6 +191,35 @@ async function handleDownload() {
   }
 }
 
+function resetResultPreview() {
+  if (resultImageObjectURL) {
+    URL.revokeObjectURL(resultImageObjectURL)
+    resultImageObjectURL = null
+  }
+  resultImage.value = ''
+}
+
+async function loadResultPreview(taskId: string, fallbackURL?: string) {
+  if (fallbackURL?.startsWith('data:')) {
+    resetResultPreview()
+    resultImage.value = fallbackURL
+    return
+  }
+
+  const token = localStorage.getItem('token')
+  const resp = await fetch(`/api/v1/tasks/${taskId}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!resp.ok) {
+    throw new Error('加载结果预览失败')
+  }
+
+  const blob = await resp.blob()
+  resetResultPreview()
+  resultImageObjectURL = URL.createObjectURL(blob)
+  resultImage.value = resultImageObjectURL
+}
+
 function handleInsertToken(token: string) {
   const current = userInput.value.trim()
   userInput.value = current ? `${current}, ${token}` : token
@@ -199,7 +230,7 @@ async function handleGenerate() {
 
   generating.value = true
   error.value = ''
-  resultImage.value = ''
+  resetResultPreview()
   currentTask.value = null
 
   try {
@@ -209,8 +240,14 @@ async function handleGenerate() {
     // Subscribe to WebSocket updates
     unsubscribe = subscribeTask(task.id!, (update) => {
       if (update.status === 'done') {
-        resultImage.value = update.result_image_url
-        generating.value = false
+        loadResultPreview(task.id!, update.result_image_url)
+          .then(() => {
+            generating.value = false
+          })
+          .catch((e: any) => {
+            error.value = e.message || '加载结果预览失败'
+            generating.value = false
+          })
       } else if (update.status === 'failed') {
         error.value = update.error_message || '生图失败'
         generating.value = false
@@ -237,7 +274,7 @@ async function pollTask(taskId: string) {
       const t = await getTask(taskId)
       currentTask.value = t
       if (t.status === 'done') {
-        resultImage.value = t.result_image_url
+        await loadResultPreview(taskId, t.result_image_url)
         generating.value = false
         return
       }
