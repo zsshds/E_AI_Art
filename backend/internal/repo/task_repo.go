@@ -228,3 +228,20 @@ func (r *TaskRepo) UpdateFinalPrompt(ctx context.Context, id string, finalPrompt
 	_, err = r.collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	return err
 }
+
+func (r *TaskRepo) ListStaleProcessing(ctx context.Context, before time.Time) ([]model.Task, error) {
+	cursor, err := r.collection.Find(ctx, bson.M{
+		"status":     model.TaskStatusProcessing,
+		"updated_at": bson.M{"$lt": before},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("find stale processing tasks: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var tasks []model.Task
+	if err := cursor.All(ctx, &tasks); err != nil {
+		return nil, fmt.Errorf("decode stale processing tasks: %w", err)
+	}
+	return tasks, nil
+}

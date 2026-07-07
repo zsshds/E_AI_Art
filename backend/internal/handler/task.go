@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -225,9 +226,11 @@ func (h *TaskHandler) Download(c echo.Context) error {
 	id := c.Param("id")
 	t, err := h.repo.GetByID(c.Request().Context(), id)
 	if err != nil {
+		log.Printf("[task %s] download task lookup failed: %v", id, err)
 		return fail(c, http.StatusNotFound, "task not found")
 	}
 	if t.ResultImageURL == "" {
+		log.Printf("[task %s] download requested but result_image_url is empty", id)
 		return fail(c, http.StatusNotFound, "no image available")
 	}
 
@@ -236,17 +239,21 @@ func (h *TaskHandler) Download(c echo.Context) error {
 	}
 
 	if !strings.HasPrefix(t.ResultImageURL, "http://") && !strings.HasPrefix(t.ResultImageURL, "https://") {
+		log.Printf("[task %s] download unsupported result_image_url=%s", id, t.ResultImageURL)
 		return fail(c, http.StatusBadRequest, "unsupported image url")
 	}
 
 	client := &http.Client{Timeout: time.Duration(h.downloadTimeoutSec) * time.Second}
 	resp, err := client.Get(t.ResultImageURL)
 	if err != nil {
+		log.Printf("[task %s] download fetch failed url=%s timeout_sec=%d err=%v", id, t.ResultImageURL, h.downloadTimeoutSec, err)
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("fetch image: %v", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Printf("[task %s] download upstream error status=%d url=%s body=%q", id, resp.StatusCode, t.ResultImageURL, string(body))
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("upstream image error %d", resp.StatusCode))
 	}
 
@@ -257,7 +264,9 @@ func (h *TaskHandler) Download(c echo.Context) error {
 	c.Response().Header().Set("Content-Type", contentType)
 	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, shortTaskID(id)))
 	c.Response().WriteHeader(http.StatusOK)
-	_, _ = io.Copy(c.Response(), resp.Body)
+	if _, err := io.Copy(c.Response(), resp.Body); err != nil {
+		log.Printf("[task %s] download response copy failed url=%s err=%v", id, t.ResultImageURL, err)
+	}
 	return nil
 }
 
