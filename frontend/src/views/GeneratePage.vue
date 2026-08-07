@@ -51,6 +51,7 @@ const uploadLimitDialogMessage = ref('')
 const profileLoadError = ref('')
 const error = ref('')
 let unsubscribe: (() => void) | null = null
+let resultImageObjectURL: string | null = null
 
 onMounted(async () => {
   try {
@@ -63,6 +64,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unsubscribe?.()
+  if (resultImageObjectURL) {
+    URL.revokeObjectURL(resultImageObjectURL)
+  }
 })
 
 const downloading = ref(false)
@@ -116,19 +120,21 @@ async function processFiles(files: File[]) {
     return
   }
   const toAdd = files.slice(0, remaining)
+  const oversizeFile = toAdd.find(file => file.size > 10 * 1024 * 1024)
+  if (oversizeFile) {
+    uploadLimitDialogMessage.value = `图片 ${oversizeFile.name} 超过 10MB，已取消本次上传。`
+    uploadLimitDialogVisible.value = true
+    return
+  }
   for (const file of toAdd) {
     if (!file.type.startsWith('image/')) {
       alert(`文件 ${file.name} 不是图片格式`)
       continue
     }
-    if (file.size > 10 * 1024 * 1024) {
-      alert(`图片 ${file.name} 大小超过 10MB`)
-      continue
-    }
     try {
       const data = await readFileAsBase64(file)
       sourceImageDatas.value.push(data)
-      sourceImagePreviews.value.push(URL.createObjectURL(file))
+      sourceImagePreviews.value.push(data)
     } catch {
       alert(`读取图片 ${file.name} 失败`)
     }
@@ -154,9 +160,12 @@ async function handleDrop(e: DragEvent) {
 
 function handleRemoveImage(index: number) {
   sourceImageDatas.value.splice(index, 1)
-  const preview = sourceImagePreviews.value[index]
-  if (preview) URL.revokeObjectURL(preview)
   sourceImagePreviews.value.splice(index, 1)
+}
+
+function closeUploadLimitDialog() {
+  uploadLimitDialogVisible.value = false
+  uploadLimitDialogMessage.value = ''
 }
 
 async function handleDownload() {
@@ -184,6 +193,35 @@ async function handleDownload() {
   }
 }
 
+function resetResultPreview() {
+  if (resultImageObjectURL) {
+    URL.revokeObjectURL(resultImageObjectURL)
+    resultImageObjectURL = null
+  }
+  resultImage.value = ''
+}
+
+async function loadResultPreview(taskId: string, fallbackURL?: string) {
+  if (fallbackURL?.startsWith('data:')) {
+    resetResultPreview()
+    resultImage.value = fallbackURL
+    return
+  }
+
+  const token = localStorage.getItem('token')
+  const resp = await fetch(`/api/v1/tasks/${taskId}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!resp.ok) {
+    throw new Error('加载结果预览失败')
+  }
+
+  const blob = await resp.blob()
+  resetResultPreview()
+  resultImageObjectURL = URL.createObjectURL(blob)
+  resultImage.value = resultImageObjectURL
+}
+
 function handleInsertToken(token: string) {
   const current = userInput.value.trim()
   userInput.value = current ? `${current}, ${token}` : token
@@ -194,7 +232,7 @@ async function handleGenerate() {
 
   generating.value = true
   error.value = ''
-  resultImage.value = ''
+  resetResultPreview()
   currentTask.value = null
 
   try {
@@ -204,8 +242,14 @@ async function handleGenerate() {
     // Subscribe to WebSocket updates
     unsubscribe = subscribeTask(task.id!, (update) => {
       if (update.status === 'done') {
-        resultImage.value = update.result_image_url
-        generating.value = false
+        loadResultPreview(task.id!, update.result_image_url)
+          .then(() => {
+            generating.value = false
+          })
+          .catch((e: any) => {
+            error.value = e.message || '加载结果预览失败'
+            generating.value = false
+          })
       } else if (update.status === 'failed') {
         error.value = update.error_message || '生图失败'
         generating.value = false
@@ -232,7 +276,7 @@ async function pollTask(taskId: string) {
       const t = await getTask(taskId)
       currentTask.value = t
       if (t.status === 'done') {
-        resultImage.value = t.result_image_url
+        await loadResultPreview(taskId, t.result_image_url)
         generating.value = false
         return
       }
@@ -389,6 +433,14 @@ async function pollTask(taskId: string) {
         <p>生成的图片将显示在这里</p>
       </div>
     </div>
+
+    <div v-if="uploadLimitDialogVisible" class="dialog-backdrop" @click.self="closeUploadLimitDialog">
+      <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="upload-limit-title">
+        <h3 id="upload-limit-title">上传失败</h3>
+        <p>{{ uploadLimitDialogMessage }}</p>
+        <button class="btn btn-primary" @click="closeUploadLimitDialog">确认</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -528,6 +580,38 @@ textarea.text-input {
 .btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); }
 
 .hint { font-weight: 400; font-size: 12px; color: var(--color-text-muted); }
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.dialog-card {
+  width: min(420px, 100%);
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+  padding: 24px;
+  border: 1px solid var(--color-border);
+}
+
+.dialog-card h3 {
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+.dialog-card p {
+  font-size: 14px;
+  color: var(--color-text);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
 
 .upload-area {
   border: 2px dashed var(--color-border);
