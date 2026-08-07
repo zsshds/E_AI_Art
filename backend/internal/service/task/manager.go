@@ -19,38 +19,40 @@ import (
 )
 
 type Manager struct {
-	rabbitURI        string
-	rabbitConn       *amqp.Connection
-	rabbitMu         sync.Mutex
-	imageClient      *image.Client
-	taskRepo         *repo.TaskRepo
-	styleProfileRepo *repo.StyleProfileRepo
-	wsHub            *ws.Hub
-	concurrency      int
-	maxRetry         int
-	timeoutSec       int
+	rabbitURI            string
+	rabbitConn           *amqp.Connection
+	rabbitMu             sync.Mutex
+	imageClient          *image.Client
+	taskRepo             *repo.TaskRepo
+	styleProfileRepo     *repo.StyleProfileRepo
+	wsHub                *ws.Hub
+	concurrency          int
+	maxRetry             int
+	timeoutSec           int
+	processingTimeoutSec int
 }
 
 type TaskMessage struct {
 	TaskID string `json:"task_id"`
 }
 
-func NewManager(rabbitURI string, imageClient *image.Client, taskRepo *repo.TaskRepo, styleProfileRepo *repo.StyleProfileRepo, wsHub *ws.Hub, concurrency, maxRetry, timeoutSec int) (*Manager, error) {
+func NewManager(rabbitURI string, imageClient *image.Client, taskRepo *repo.TaskRepo, styleProfileRepo *repo.StyleProfileRepo, wsHub *ws.Hub, concurrency, maxRetry, timeoutSec, processingTimeoutSec int) (*Manager, error) {
 	conn, err := amqp.Dial(rabbitURI)
 	if err != nil {
 		return nil, fmt.Errorf("connect to rabbitmq: %w", err)
 	}
 
 	m := &Manager{
-		rabbitURI:        rabbitURI,
-		rabbitConn:       conn,
-		imageClient:      imageClient,
-		taskRepo:         taskRepo,
-		styleProfileRepo: styleProfileRepo,
-		wsHub:            wsHub,
-		concurrency:      concurrency,
-		maxRetry:         maxRetry,
-		timeoutSec:       timeoutSec,
+		rabbitURI:            rabbitURI,
+		rabbitConn:           conn,
+		imageClient:          imageClient,
+		taskRepo:             taskRepo,
+		styleProfileRepo:     styleProfileRepo,
+		wsHub:                wsHub,
+		concurrency:          concurrency,
+		maxRetry:             maxRetry,
+		timeoutSec:           timeoutSec,
+		processingTimeoutSec: processingTimeoutSec,
 	}
 
 	if err := m.declareTopology(); err != nil {
@@ -181,6 +183,7 @@ func (m *Manager) StartWorkerPool(ctx context.Context) {
 	for i := 0; i < m.concurrency; i++ {
 		go m.worker(ctx, i)
 	}
+	go m.staleTaskSweeper(ctx)
 	log.Printf("started %d task workers", m.concurrency)
 }
 
@@ -311,7 +314,7 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	if genErr != nil {
 		errMsg := genErr.Error()
 		log.Printf("[task %s] submit failed: %s", taskID, errMsg)
-		m.taskRepo.UpdateFailure(taskCtx, taskID, errMsg)
+		markTaskFailed(m.taskRepo, taskID, errMsg)
 		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: errMsg})
 		return
 	}
@@ -347,7 +350,7 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	}
 
 	if platformTaskID == "" {
-		m.taskRepo.UpdateFailure(taskCtx, taskID, "unrecognized platform response")
+		markTaskFailed(m.taskRepo, taskID, "unrecognized platform response")
 		m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: "unrecognized platform response"})
 		return
 	}
@@ -422,7 +425,7 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 	for {
 		select {
 		case <-ctx.Done():
-			m.taskRepo.UpdateFailure(context.Background(), taskID, "task timed out")
+			markTaskFailed(m.taskRepo, taskID, "task timed out")
 			m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: "task timed out"})
 			return
 		case <-time.After(pollInterval):
@@ -462,7 +465,7 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 				log.Printf("[task %s] completed successfully", taskID)
 				return
 			}
-			m.taskRepo.UpdateFailure(context.Background(), taskID, "platform returned success but no image data")
+			markTaskFailed(m.taskRepo, taskID, "platform returned success but no image data")
 			m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: "no image data"})
 			return
 
@@ -471,12 +474,60 @@ func (m *Manager) pollTaskResult(ctx context.Context, taskID, platformTaskID str
 			if errMsg == "" {
 				errMsg = "platform task failed"
 			}
-			m.taskRepo.UpdateFailure(context.Background(), taskID, errMsg)
+			markTaskFailed(m.taskRepo, taskID, errMsg)
 			m.wsHub.PushUpdate(taskID, ws.TaskUpdate{TaskID: taskID, Status: "failed", ErrorMessage: errMsg})
 			log.Printf("[task %s] platform task failed: %s", taskID, errMsg)
 			return
 		}
 	}
+}
+
+func (m *Manager) staleTaskSweeper(ctx context.Context) {
+	if m.processingTimeoutSec <= 0 {
+		return
+	}
+
+	interval := 30 * time.Second
+	staleAfter := time.Duration(m.processingTimeoutSec) * time.Second
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-staleAfter)
+			sweepCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			tasks, err := m.taskRepo.ListStaleProcessing(sweepCtx, cutoff)
+			cancel()
+			if err != nil {
+				log.Printf("stale task sweeper list error: %v", err)
+				continue
+			}
+
+			for _, t := range tasks {
+				errMsg := fmt.Sprintf("task exceeded processing timeout of %d seconds", m.processingTimeoutSec)
+				if err := markTaskFailed(m.taskRepo, t.ID.Hex(), errMsg); err != nil {
+					log.Printf("[task %s] stale task sweeper update failure: %v", t.ID.Hex(), err)
+					continue
+				}
+				m.wsHub.PushUpdate(t.ID.Hex(), ws.TaskUpdate{
+					TaskID:       t.ID.Hex(),
+					Status:       "failed",
+					ErrorMessage: errMsg,
+				})
+				log.Printf("[task %s] stale processing task marked failed", t.ID.Hex())
+			}
+		}
+	}
+}
+
+func markTaskFailed(taskRepo *repo.TaskRepo, taskID, errMsg string) error {
+	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return taskRepo.UpdateFailure(updateCtx, taskID, errMsg)
 }
 
 func (m *Manager) Close() {

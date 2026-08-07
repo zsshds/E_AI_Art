@@ -77,6 +77,11 @@ func main() {
 			cfg.Worker.DownloadTimeoutSec = t
 		}
 	}
+	if v := os.Getenv("TASK_PROCESSING_TIMEOUT_SECONDS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Worker.ProcessingTimeoutSec = t
+		}
+	}
 	if v := os.Getenv("TASK_MAX_RETRY"); v != "" {
 		if r, err := strconv.Atoi(v); err == nil {
 			cfg.Worker.MaxRetry = r
@@ -91,6 +96,9 @@ func main() {
 	}
 	if cfg.Worker.DownloadTimeoutSec <= 0 {
 		cfg.Worker.DownloadTimeoutSec = 120
+	}
+	if cfg.Worker.ProcessingTimeoutSec <= 0 {
+		cfg.Worker.ProcessingTimeoutSec = cfg.Worker.TaskTimeoutSec
 	}
 	if cfg.Worker.ImageRequestTimeoutSec > cfg.Worker.TaskTimeoutSec {
 		cfg.Worker.TaskTimeoutSec = cfg.Worker.ImageRequestTimeoutSec
@@ -174,6 +182,7 @@ func main() {
 		cfg.Worker.Concurrency,
 		cfg.Worker.MaxRetry,
 		cfg.Worker.TaskTimeoutSec,
+		cfg.Worker.ProcessingTimeoutSec,
 	)
 	if err != nil {
 		log.Fatalf("connect to rabbitmq: %v", err)

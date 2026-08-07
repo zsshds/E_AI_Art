@@ -53,6 +53,7 @@ type WorkerConfig struct {
 	TaskTimeoutSec         int `yaml:"task_timeout_sec"`
 	ImageRequestTimeoutSec int `yaml:"image_request_timeout_sec"`
 	DownloadTimeoutSec     int `yaml:"download_timeout_sec"`
+	ProcessingTimeoutSec   int `yaml:"processing_timeout_sec"`
 	MaxRetry               int `yaml:"max_retry"`
 }
 
@@ -74,6 +75,7 @@ func Load(path string) (*Config, error) {
 			TaskTimeoutSec:         300,
 			ImageRequestTimeoutSec: 600,
 			DownloadTimeoutSec:     120,
+			ProcessingTimeoutSec:   300,
 			MaxRetry:               2,
 		},
 	}
@@ -94,6 +96,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Worker.DownloadTimeoutSec <= 0 {
 		cfg.Worker.DownloadTimeoutSec = 120
+	}
+	if cfg.Worker.ProcessingTimeoutSec <= 0 {
+		cfg.Worker.ProcessingTimeoutSec = cfg.Worker.TaskTimeoutSec
 	}
 	cfg.Worker.TimeoutSec = cfg.Worker.TaskTimeoutSec
 

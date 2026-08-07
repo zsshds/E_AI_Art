@@ -4,10 +4,13 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"github.com/imagegen/backend/internal/middleware"
@@ -102,6 +105,14 @@ func (h *TaskHandler) Create(c echo.Context) error {
 	return ok(c, t)
 }
 
+type TaskListResponse struct {
+	Items      []model.Task `json:"items"`
+	Total      int64        `json:"total"`
+	Page       int          `json:"page"`
+	PageSize   int          `json:"page_size"`
+	TotalPages int          `json:"total_pages"`
+}
+
 func (h *TaskHandler) GetByID(c echo.Context) error {
 	id := c.Param("id")
 	t, err := h.repo.GetByID(c.Request().Context(), id)
@@ -114,15 +125,33 @@ func (h *TaskHandler) GetByID(c echo.Context) error {
 func (h *TaskHandler) List(c echo.Context) error {
 	role := middleware.GetRole(c)
 	username := middleware.GetUsername(c)
+	createdByFilter := strings.TrimSpace(c.QueryParam("created_by"))
+	statusFilter := strings.TrimSpace(c.QueryParam("status"))
+	page := parsePositiveInt(c.QueryParam("page"), repo.DefaultTaskListPage)
+	pageSize := parsePositiveInt(c.QueryParam("page_size"), repo.DefaultTaskListPageSize)
+	if pageSize > repo.MaxTaskListPageSize {
+		pageSize = repo.MaxTaskListPageSize
+	}
 	ctx := c.Request().Context()
+
+	filter := bson.M{}
+	if createdByFilter != "" {
+		filter["created_by"] = createdByFilter
+	}
+	if statusFilter != "" {
+		if !isValidTaskStatus(statusFilter) {
+			return fail(c, http.StatusBadRequest, "invalid status")
+		}
+		filter["status"] = statusFilter
+	}
 
 	// Admin sees all tasks
 	if role == "admin" {
-		tasks, err := h.repo.List(ctx, "", nil)
+		tasks, total, err := h.repo.List(ctx, filter, page, pageSize)
 		if err != nil {
 			return fail(c, http.StatusInternalServerError, err.Error())
 		}
-		return ok(c, summarizeTasksForList(tasks))
+		return ok(c, newTaskListResponse(tasks, total, page, pageSize))
 	}
 
 	// User: get their project IDs
@@ -132,29 +161,18 @@ func (h *TaskHandler) List(c echo.Context) error {
 		projectIDs = append(projectIDs, p.ID.Hex())
 	}
 
-	// Fetch tasks: user's own OR from their projects
-	allTasks, err := h.repo.List(ctx, "", nil)
+	visibilityRules := []bson.M{{"created_by": username}}
+	if len(projectIDs) > 0 {
+		visibilityRules = append(visibilityRules, bson.M{"project_id": bson.M{"$in": projectIDs}})
+	}
+	filter["$or"] = visibilityRules
+
+	tasks, total, err := h.repo.List(ctx, filter, page, pageSize)
 	if err != nil {
 		return fail(c, http.StatusInternalServerError, err.Error())
 	}
 
-	filtered := make([]model.Task, 0)
-	for _, t := range allTasks {
-		if t.CreatedBy == username {
-			filtered = append(filtered, t)
-			continue
-		}
-		if t.ProjectID != "" {
-			for _, pid := range projectIDs {
-				if t.ProjectID == pid {
-					filtered = append(filtered, t)
-					break
-				}
-			}
-		}
-	}
-
-	return ok(c, summarizeTasksForList(filtered))
+	return ok(c, newTaskListResponse(tasks, total, page, pageSize))
 }
 
 func summarizeTasksForList(tasks []model.Task) []model.Task {
@@ -170,13 +188,49 @@ func summarizeTasksForList(tasks []model.Task) []model.Task {
 	return summaries
 }
 
+func newTaskListResponse(tasks []model.Task, total int64, page, pageSize int) TaskListResponse {
+	totalPages := 0
+	if total > 0 && pageSize > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+	return TaskListResponse{
+		Items:      summarizeTasksForList(tasks),
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func isValidTaskStatus(status string) bool {
+	switch model.TaskStatus(status) {
+	case model.TaskStatusPending, model.TaskStatusProcessing, model.TaskStatusDone, model.TaskStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *TaskHandler) Download(c echo.Context) error {
 	id := c.Param("id")
 	t, err := h.repo.GetByID(c.Request().Context(), id)
 	if err != nil {
+		log.Printf("[task %s] download task lookup failed: %v", id, err)
 		return fail(c, http.StatusNotFound, "task not found")
 	}
 	if t.ResultImageURL == "" {
+		log.Printf("[task %s] download requested but result_image_url is empty", id)
 		return fail(c, http.StatusNotFound, "no image available")
 	}
 
@@ -185,17 +239,21 @@ func (h *TaskHandler) Download(c echo.Context) error {
 	}
 
 	if !strings.HasPrefix(t.ResultImageURL, "http://") && !strings.HasPrefix(t.ResultImageURL, "https://") {
+		log.Printf("[task %s] download unsupported result_image_url=%s", id, t.ResultImageURL)
 		return fail(c, http.StatusBadRequest, "unsupported image url")
 	}
 
 	client := &http.Client{Timeout: time.Duration(h.downloadTimeoutSec) * time.Second}
 	resp, err := client.Get(t.ResultImageURL)
 	if err != nil {
+		log.Printf("[task %s] download fetch failed url=%s timeout_sec=%d err=%v", id, t.ResultImageURL, h.downloadTimeoutSec, err)
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("fetch image: %v", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Printf("[task %s] download upstream error status=%d url=%s body=%q", id, resp.StatusCode, t.ResultImageURL, string(body))
 		return fail(c, http.StatusInternalServerError, fmt.Sprintf("upstream image error %d", resp.StatusCode))
 	}
 
@@ -206,7 +264,9 @@ func (h *TaskHandler) Download(c echo.Context) error {
 	c.Response().Header().Set("Content-Type", contentType)
 	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="E_AI_Art-%s.png"`, shortTaskID(id)))
 	c.Response().WriteHeader(http.StatusOK)
-	_, _ = io.Copy(c.Response(), resp.Body)
+	if _, err := io.Copy(c.Response(), resp.Body); err != nil {
+		log.Printf("[task %s] download response copy failed url=%s err=%v", id, t.ResultImageURL, err)
+	}
 	return nil
 }
 

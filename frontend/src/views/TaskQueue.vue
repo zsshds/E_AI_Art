@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { listTasks, type Task } from '../api/task'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 const tasks = ref<Task[]>([])
 const filter = ref<'all' | 'pending' | 'processing' | 'done' | 'failed'>('all')
+const creatorFilter = ref('all')
+const page = ref(1)
+const total = ref(0)
+const totalPages = ref(0)
+const jumpPage = ref('1')
+const pageSize = 20
 const loading = ref(false)
 const downloading = ref(false)
 
@@ -13,10 +21,26 @@ onMounted(async () => {
   await refresh()
 })
 
-async function refresh() {
+watch([filter, creatorFilter], async () => {
+  page.value = 1
+  jumpPage.value = '1'
+  await refresh(1)
+})
+
+async function refresh(targetPage = page.value) {
   loading.value = true
   try {
-    tasks.value = await listTasks()
+    const result = await listTasks({
+      createdBy: creatorFilter.value === 'all' ? undefined : creatorFilter.value,
+      status: filter.value,
+      page: targetPage,
+      pageSize,
+    })
+    tasks.value = result.items
+    total.value = result.total
+    page.value = result.page
+    totalPages.value = result.total_pages
+    jumpPage.value = String(result.page)
   } finally {
     loading.value = false
   }
@@ -51,9 +75,25 @@ async function handleDownload(taskId: string) {
   }
 }
 
-const filteredTasks = computed(() => {
-  if (filter.value === 'all') return tasks.value
-  return tasks.value.filter(t => t.status === filter.value)
+const creatorOptions = computed(() => {
+  const creators = [...new Set(tasks.value.map(task => task.created_by).filter(Boolean))]
+  creators.sort((a, b) => {
+    if (a === auth.username) return -1
+    if (b === auth.username) return 1
+    return a.localeCompare(b, 'zh-CN')
+  })
+  return creators
+})
+
+const visiblePageNumbers = computed(() => {
+  if (totalPages.value <= 0) return []
+  const start = Math.max(1, page.value - 2)
+  const end = Math.min(totalPages.value, page.value + 2)
+  const pages: number[] = []
+  for (let i = start; i <= end; i += 1) {
+    pages.push(i)
+  }
+  return pages
 })
 
 const statusLabels: Record<string, string> = {
@@ -62,28 +102,82 @@ const statusLabels: Record<string, string> = {
   done: '已完成',
   failed: '失败',
 }
+
+async function goToPrevPage() {
+  if (page.value <= 1 || loading.value) return
+  await refresh(page.value - 1)
+}
+
+async function goToNextPage() {
+  if (page.value >= totalPages.value || loading.value) return
+  await refresh(page.value + 1)
+}
+
+async function goToPage(targetPage: number) {
+  if (loading.value || targetPage === page.value || targetPage < 1 || targetPage > totalPages.value) return
+  await refresh(targetPage)
+}
+
+async function handleJumpPage() {
+  const targetPage = Number.parseInt(jumpPage.value, 10)
+  if (!Number.isFinite(targetPage) || targetPage < 1 || targetPage > totalPages.value) {
+    alert(`请输入 1 到 ${totalPages.value || 1} 之间的页码`)
+    jumpPage.value = String(page.value)
+    return
+  }
+  await goToPage(targetPage)
+}
 </script>
 
 <template>
   <div class="review-queue">
     <div class="queue-header">
       <h2>任务队列</h2>
-      <button class="btn btn-secondary" @click="refresh" :disabled="loading">
+      <button class="btn btn-secondary" @click="refresh()" :disabled="loading">
         {{ loading ? '刷新中...' : '刷新' }}
       </button>
     </div>
 
-    <div class="filter-bar">
-      <button
-        v-for="(label, status) in { all: '全部', ...statusLabels }"
-        :key="status"
-        class="chip"
-        :class="{ active: filter === status }"
-        @click="filter = status as any"
-      >{{ label }}</button>
+    <div class="filter-panel">
+      <div class="filter-group">
+        <span class="filter-label">状态</span>
+        <div class="filter-bar">
+          <button
+            v-for="(label, status) in { all: '全部', ...statusLabels }"
+            :key="status"
+            class="chip"
+            :class="{ active: filter === status }"
+            @click="filter = status as any"
+          >{{ label }}</button>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <span class="filter-label">创建者</span>
+        <div class="filter-bar">
+          <button
+            class="chip"
+            :class="{ active: creatorFilter === 'all' }"
+            @click="creatorFilter = 'all'"
+          >全部</button>
+          <button
+            v-for="creator in creatorOptions"
+            :key="creator"
+            class="chip"
+            :class="{ active: creatorFilter === creator }"
+            @click="creatorFilter = creator"
+          >{{ creator === auth.username ? `${creator}（我）` : creator }}</button>
+        </div>
+      </div>
     </div>
 
-    <div v-if="filteredTasks.length === 0" class="empty-state">
+    <div class="pagination-summary">
+      <span>共 {{ total }} 条</span>
+      <span>每页 {{ pageSize }} 条</span>
+      <span v-if="totalPages > 0">第 {{ page }} / {{ totalPages }} 页</span>
+    </div>
+
+    <div v-if="tasks.length === 0" class="empty-state">
       暂无任务记录
     </div>
 
@@ -96,7 +190,7 @@ const statusLabels: Record<string, string> = {
         <span class="col-time">创建时间</span>
       </div>
       <div
-        v-for="task in filteredTasks"
+        v-for="task in tasks"
         :key="task.id"
         class="table-row"
         @click="goToTask(task.id!)"
@@ -108,6 +202,34 @@ const statusLabels: Record<string, string> = {
           <span class="status-badge" :class="task.status">{{ statusLabels[task.status] }}</span>
         </span>
         <span class="col-time">{{ new Date(task.created_at).toLocaleString() }}</span>
+      </div>
+    </div>
+
+    <div v-if="totalPages > 0" class="pagination-bar">
+      <div class="page-actions">
+        <button class="btn btn-secondary" @click="goToPrevPage" :disabled="loading || page <= 1">上一页</button>
+        <button
+          v-for="pageNo in visiblePageNumbers"
+          :key="pageNo"
+          class="chip"
+          :class="{ active: page === pageNo }"
+          @click="goToPage(pageNo)"
+        >{{ pageNo }}</button>
+        <button class="btn btn-secondary" @click="goToNextPage" :disabled="loading || page >= totalPages">下一页</button>
+      </div>
+
+      <div class="jump-box">
+        <span>跳到</span>
+        <input
+          v-model="jumpPage"
+          type="number"
+          min="1"
+          :max="Math.max(totalPages, 1)"
+          class="page-input"
+          @keyup.enter="handleJumpPage"
+        />
+        <span>页</span>
+        <button class="btn btn-secondary" @click="handleJumpPage" :disabled="loading">确定</button>
       </div>
     </div>
 
@@ -126,10 +248,35 @@ const statusLabels: Record<string, string> = {
   margin-bottom: 16px;
 }
 
+.filter-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-group {
+  display: grid;
+  gap: 8px;
+}
+
+.filter-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
 .filter-bar {
   display: flex;
   gap: 8px;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.pagination-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
 }
 
 .chip {
@@ -211,4 +358,36 @@ const statusLabels: Record<string, string> = {
 .btn-primary { background: var(--color-primary); color: white; border-color: var(--color-primary); }
 .btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); }
 .btn-secondary:hover:not(:disabled) { background: var(--color-bg); }
+
+.pagination-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.jump-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.page-input {
+  width: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  font-size: 13px;
+}
 </style>
