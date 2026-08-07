@@ -9,6 +9,7 @@ const profiles = ref<StyleProfile[]>([])
 const selectedId = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref('')
+const loadError = ref('')
 const previewing = ref(false)
 const previewImages = ref<string[]>([])
 const testInput = ref('')
@@ -31,8 +32,9 @@ const editedForm = ref<StyleProfile>({ ...emptyProfile() })
 onMounted(async () => {
   try {
     profiles.value = await listStyleProfiles()
-  } catch {
-    // Handle error silently
+    loadError.value = ''
+  } catch (e: any) {
+    loadError.value = e.message || '加载风格列表失败'
   }
 })
 
@@ -158,6 +160,7 @@ async function handlePreview() {
           />
         </label>
       </div>
+      <div v-if="loadError" class="load-error">{{ loadError }}</div>
       <div class="profile-list">
         <div
           v-for="p in profiles"
@@ -169,6 +172,7 @@ async function handlePreview() {
           <span>{{ p.name }}</span>
           <small>v{{ p.version }}</small>
         </div>
+        <div v-if="!loadError && profiles.length === 0" class="empty-state">暂无风格数据</div>
       </div>
     </div>
 
@@ -250,6 +254,13 @@ async function handlePreview() {
   gap: 4px;
 }
 
+.empty-state {
+  padding: 16px 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
 .profile-item {
   padding: 10px 12px;
   background: var(--color-surface);
@@ -272,6 +283,15 @@ async function handlePreview() {
 }
 
 .save-error {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.load-error {
   margin-top: 12px;
   padding: 8px 12px;
   background: #fee2e2;

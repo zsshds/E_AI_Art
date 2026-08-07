@@ -3,11 +3,14 @@ package image
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +30,7 @@ type resolvedConfig struct {
 	baseURL             string
 	apiKey              string
 	generationURL       string
+	editURL             string
 	pollURLPrefix       string
 	bananaGenerationURL string
 	chatURL             string
@@ -172,10 +176,12 @@ func (c *Client) resolveConfig(ctx context.Context) resolvedConfig {
 	baseURL := c.baseURL
 	apiKey := c.apiKey
 	genPath := "/v1/images/generations/tasks"
+	editPath := "/v1/images/edits"
 	pollPath := "/v1/images/tasks/"
 	bananaPath := "/v1/images/generations"
 	chatPath := "/v1/chat/completions"
 	genURL := ""
+	editURL := ""
 	pollURL := ""
 	bananaURL := ""
 	chatURL := ""
@@ -190,6 +196,9 @@ func (c *Client) resolveConfig(ctx context.Context) resolvedConfig {
 		if v, err := c.settingRepo.Get(ctx, "api_generation_path"); err == nil && v != "" {
 			genPath = v
 		}
+		if v, err := c.settingRepo.Get(ctx, "api_edit_path"); err == nil && v != "" {
+			editPath = v
+		}
 		if v, err := c.settingRepo.Get(ctx, "api_poll_path"); err == nil && v != "" {
 			pollPath = v
 		}
@@ -198,6 +207,9 @@ func (c *Client) resolveConfig(ctx context.Context) resolvedConfig {
 		}
 		if v, err := c.settingRepo.Get(ctx, "api_generation_url"); err == nil && v != "" {
 			genURL = v
+		}
+		if v, err := c.settingRepo.Get(ctx, "api_edit_url"); err == nil && v != "" {
+			editURL = v
 		}
 		if v, err := c.settingRepo.Get(ctx, "api_poll_url"); err == nil && v != "" {
 			pollURL = v
@@ -214,6 +226,7 @@ func (c *Client) resolveConfig(ctx context.Context) resolvedConfig {
 		baseURL:             strings.TrimSpace(baseURL),
 		apiKey:              apiKey,
 		generationURL:       pickConfiguredURL(baseURL, genURL, genPath),
+		editURL:             pickConfiguredURL(baseURL, editURL, editPath),
 		pollURLPrefix:       pickConfiguredURL(baseURL, pollURL, pollPath),
 		bananaGenerationURL: pickConfiguredURL(baseURL, bananaURL, bananaPath),
 		chatURL:             pickConfiguredURL(baseURL, chatURL, chatPath),
@@ -233,11 +246,43 @@ func (c *Client) CreateImageTask(ctx context.Context, body map[string]interface{
 // EditImageTask submits an async image edit task.
 func (c *Client) EditImageTask(ctx context.Context, body map[string]interface{}) (*GenTaskResponse, error) {
 	cfg := c.resolveConfig(ctx)
-	modelID, _ := body["model"].(string)
-	if model.GetModelType(modelID) == model.ModelTypeBanana {
-		return c.postTask(ctx, cfg.bananaGenerationURL, cfg.apiKey, body)
+	payload, contentType, err := buildEditMultipartBody(ctx, c.httpClient, body)
+	if err != nil {
+		return nil, err
 	}
-	return c.postTask(ctx, cfg.generationURL, cfg.apiKey, body)
+
+	log.Printf("[IMG-API] POST %s", cfg.editURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.editURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	log.Printf("[IMG-API] Response status=%d body=%s", resp.StatusCode, string(respBody))
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result GenTaskResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w (body: %s)", err, string(respBody))
+	}
+	return &result, nil
 }
 
 // ChatCompletion sends a chat completions request. Used when source images are present
@@ -409,4 +454,164 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func buildEditMultipartBody(ctx context.Context, httpClient *http.Client, body map[string]interface{}) ([]byte, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for _, key := range []string{"model", "prompt", "size", "background", "output_format", "quality"} {
+		if value, ok := body[key]; ok {
+			if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+				if err := writer.WriteField(key, s); err != nil {
+					return nil, "", fmt.Errorf("write field %s: %w", key, err)
+				}
+			}
+		}
+	}
+	if value, ok := body["n"]; ok {
+		switch n := value.(type) {
+		case int:
+			if err := writer.WriteField("n", strconv.Itoa(n)); err != nil {
+				return nil, "", fmt.Errorf("write field n: %w", err)
+			}
+		case float64:
+			if err := writer.WriteField("n", strconv.Itoa(int(n))); err != nil {
+				return nil, "", fmt.Errorf("write field n: %w", err)
+			}
+		}
+	}
+
+	imageSources := collectEditImageSources(body)
+	if len(imageSources) == 0 {
+		return nil, "", fmt.Errorf("image edit request requires at least one image")
+	}
+
+	for _, source := range imageSources {
+		filename, content, contentType, err := loadImageSource(ctx, httpClient, source)
+		if err != nil {
+			return nil, "", err
+		}
+		part, err := writer.CreateFormFile("image", filename)
+		if err != nil {
+			return nil, "", fmt.Errorf("create form file: %w", err)
+		}
+		if _, err := part.Write(content); err != nil {
+			return nil, "", fmt.Errorf("write form file: %w", err)
+		}
+		_ = contentType
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	return buf.Bytes(), writer.FormDataContentType(), nil
+}
+
+func collectEditImageSources(body map[string]interface{}) []string {
+	sources := make([]string, 0, 8)
+	appendString := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			sources = append(sources, value)
+		}
+	}
+	appendSlice := func(items []string) {
+		for _, item := range items {
+			appendString(item)
+		}
+	}
+
+	if image, ok := body["image"].(string); ok {
+		appendString(image)
+	}
+	if images, ok := body["images"].([]string); ok {
+		appendSlice(images)
+	}
+	if images, ok := body["images"].([]interface{}); ok {
+		for _, item := range images {
+			if s, ok := item.(string); ok {
+				appendString(s)
+			}
+		}
+	}
+	if refs, ok := body["reference_images"].([]string); ok {
+		appendSlice(refs)
+	}
+	if refs, ok := body["reference_images"].([]interface{}); ok {
+		for _, item := range refs {
+			if s, ok := item.(string); ok {
+				appendString(s)
+			}
+		}
+	}
+	return sources
+}
+
+func loadImageSource(ctx context.Context, httpClient *http.Client, source string) (string, []byte, string, error) {
+	source = strings.TrimSpace(source)
+	if strings.HasPrefix(source, "data:") {
+		return decodeDataURL(source)
+	}
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+		if err != nil {
+			return "", nil, "", fmt.Errorf("new image request: %w", err)
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return "", nil, "", fmt.Errorf("download image: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+			return "", nil, "", fmt.Errorf("download image status %d: %s", resp.StatusCode, string(body))
+		}
+		content, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", nil, "", fmt.Errorf("read image body: %w", err)
+		}
+		contentType := resp.Header.Get("Content-Type")
+		filename := path.Base(strings.Split(source, "?")[0])
+		if filename == "" || filename == "." || filename == "/" {
+			filename = "image.png"
+		}
+		if contentType == "" {
+			contentType = "image/png"
+		}
+		return filename, content, contentType, nil
+	}
+	return "", nil, "", fmt.Errorf("unsupported image source: %s", source)
+}
+
+func decodeDataURL(value string) (string, []byte, string, error) {
+	parts := strings.SplitN(value, ",", 2)
+	if len(parts) != 2 {
+		return "", nil, "", fmt.Errorf("invalid data url")
+	}
+	meta := parts[0]
+	payload := parts[1]
+	if !strings.Contains(meta, ";base64") {
+		return "", nil, "", fmt.Errorf("unsupported data url encoding")
+	}
+
+	contentType := strings.TrimPrefix(strings.SplitN(meta, ";", 2)[0], "data:")
+	if contentType == "" {
+		contentType = "image/png"
+	}
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("decode data url: %w", err)
+	}
+
+	ext := ".png"
+	switch contentType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/webp":
+		ext = ".webp"
+	}
+
+	return "upload" + ext, raw, contentType, nil
 }

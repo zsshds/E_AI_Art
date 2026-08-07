@@ -46,14 +46,18 @@ const sourceImageDatas = ref<string[]>([])
 const sourceImagePreviews = ref<string[]>([])
 const isDragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const uploadLimitDialogVisible = ref(false)
+const uploadLimitDialogMessage = ref('')
+const profileLoadError = ref('')
 const error = ref('')
 let unsubscribe: (() => void) | null = null
 
 onMounted(async () => {
   try {
     profiles.value = await listStyleProfiles()
-  } catch {
-    // Handle silently
+    profileLoadError.value = ''
+  } catch (e: any) {
+    profileLoadError.value = e.message || '加载风格列表失败'
   }
 })
 
@@ -262,6 +266,8 @@ async function pollTask(taskId: string) {
           <option value="">-- 选择风格 --</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }} ({{ p.model }})</option>
         </select>
+        <p v-if="profileLoadError" class="inline-error">{{ profileLoadError }}</p>
+        <p v-else-if="profiles.length === 0" class="inline-hint">当前没有可用风格</p>
       </div>
 
       <div class="form-group">
@@ -464,6 +470,18 @@ textarea.text-input {
   color: #991b1b;
   border-radius: var(--radius);
   font-size: 13px;
+}
+
+.inline-error {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #991b1b;
+}
+
+.inline-hint {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
 .generate-result {

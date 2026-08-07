@@ -1,7 +1,7 @@
 // 创建应用账号（权限隔离，不使用 root）
 db.getSiblingDB("imagegen").createUser({
   user: process.env.MONGO_APP_USER || "imagegen_app",
-  pwd: process.env.MONGO_APP_PASS || "changeme",
+  pwd: process.env.MONGO_APP_PASS || "changeme_app",
   roles: [{ role: "readWrite", db: "imagegen" }]
 });
 

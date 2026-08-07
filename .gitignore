@@ -28,3 +28,5 @@ rabbitmq_data/
 
 # Go
 backend/go.sum
+.tmp-go/
+.tmp-go-build/

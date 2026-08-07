@@ -281,7 +281,7 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 
 	var apiBody map[string]interface{}
 	if hasImages {
-		apiBody = builder.BuildChatRequest(task.UserInput)
+		apiBody = builder.BuildAPIRequest(task.UserInput)
 	} else {
 		apiBody = builder.BuildAPIRequest(task.UserInput)
 	}
@@ -303,7 +303,7 @@ func (m *Manager) processTask(ctx context.Context, taskID string) {
 	var genErr error
 
 	if hasImages {
-		genResp, genErr = m.imageClient.ChatCompletion(taskCtx, apiBody)
+		genResp, genErr = m.imageClient.EditImageTask(taskCtx, apiBody)
 	} else {
 		genResp, genErr = m.imageClient.CreateImageTask(taskCtx, apiBody)
 	}
