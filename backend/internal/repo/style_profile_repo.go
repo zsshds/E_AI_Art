@@ -70,6 +70,9 @@ func (r *StyleProfileRepo) List(ctx context.Context, createdBy string, projectID
 	if err := cursor.All(ctx, &profiles); err != nil {
 		return nil, fmt.Errorf("decode style profiles: %w", err)
 	}
+	if profiles == nil {
+		profiles = []model.StyleProfile{}
+	}
 	return profiles, nil
 }
 
