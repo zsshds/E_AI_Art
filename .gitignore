@@ -1,5 +1,6 @@
 # 项目配置（包含敏感信息）
 .env
+.env.deploy
 CLAUDE.md
 
 # 依赖
@@ -25,6 +26,7 @@ Thumbs.db
 # Docker
 mongo_data/
 rabbitmq_data/
+.worktrees/
 
 # Go
 backend/go.sum
