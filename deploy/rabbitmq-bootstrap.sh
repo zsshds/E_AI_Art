@@ -6,15 +6,20 @@ as_rabbitmq() {
 }
 
 start_rabbitmq() {
-  as_rabbitmq rabbitmq-server -detached
+  as_rabbitmq rabbitmq-server >/tmp/rabbitmq-bootstrap.log 2>&1 &
+  rabbitmq_pid=$!
+
   for _ in $(seq 1 60); do
-    if as_rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+    if as_rabbitmq rabbitmqctl await_startup >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
 
   printf 'Timed out waiting for RabbitMQ bootstrap server\n' >&2
+  if [[ -f /tmp/rabbitmq-bootstrap.log ]]; then
+    cat /tmp/rabbitmq-bootstrap.log >&2
+  fi
   return 1
 }
 

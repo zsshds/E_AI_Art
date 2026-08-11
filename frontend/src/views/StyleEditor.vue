@@ -31,7 +31,8 @@ const editedForm = ref<StyleProfile>({ ...emptyProfile() })
 
 onMounted(async () => {
   try {
-    profiles.value = await listStyleProfiles()
+    const data = await listStyleProfiles()
+    profiles.value = Array.isArray(data) ? data : []
     loadError.value = ''
   } catch (e: any) {
     loadError.value = e.message || '加载风格列表失败'
@@ -87,7 +88,8 @@ async function handleImport(event: Event) {
     const data = JSON.parse(text)
     importing.value = true
     const created = await createStyleProfile(data)
-    profiles.value = await listStyleProfiles()
+    const listData = await listStyleProfiles()
+    profiles.value = Array.isArray(listData) ? listData : []
     selectProfile(created)
   } catch {
     alert('导入失败，请检查 JSON 格式')
@@ -113,7 +115,8 @@ async function handleSave() {
       const created = await createStyleProfile(data)
       selectedId.value = created.id!
       form.value = { ...created }
-      profiles.value = await listStyleProfiles()
+      const listData = await listStyleProfiles()
+      profiles.value = Array.isArray(listData) ? listData : []
     }
   } catch (e: any) {
     saveError.value = e.message || '保存失败'

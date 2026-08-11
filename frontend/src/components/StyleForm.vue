@@ -30,7 +30,12 @@ const { availableModels, loading: modelsLoading } = useAvailableModels()
 
 const projects = ref<Project[]>([])
 onMounted(async () => {
-  try { projects.value = await listProjects() } catch { /* ignore */ }
+  try {
+    const data = await listProjects()
+    projects.value = Array.isArray(data) ? data : []
+  } catch {
+    /* ignore */
+  }
 })
 
 function handleApplyTemplate(fields: Record<string, string>) {

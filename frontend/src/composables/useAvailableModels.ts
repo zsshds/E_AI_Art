@@ -11,7 +11,7 @@ export function useAvailableModels() {
     loading.value = true
     getAvailableModels()
       .then((data) => {
-        models.value = data
+        models.value = Array.isArray(data) ? data : []
         loaded.value = true
       })
       .catch((e) => {
