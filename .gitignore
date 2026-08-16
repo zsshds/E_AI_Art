@@ -25,6 +25,7 @@ Thumbs.db
 # Docker
 mongo_data/
 rabbitmq_data/
+.worktrees/
 
 # Go
 backend/go.sum
