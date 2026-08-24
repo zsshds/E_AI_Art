@@ -1,0 +1,30 @@
+services:
+  e-ai-art:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: ${IMAGE_NAME:-e-ai-art}:${IMAGE_TAG:-local}
+    env_file:
+      - .env.deploy
+    ports:
+      - "8081:80"
+    volumes:
+      - mongo_data:/data/db
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS http://127.0.0.1/ >/dev/null &&
+          curl -fsS http://127.0.0.1:8080/health >/dev/null &&
+          mongosh --quiet --host 127.0.0.1 --username "$$MONGO_ROOT_USER" --password "$$MONGO_ROOT_PASS" --authenticationDatabase admin --eval 'db.runCommand({ping: 1}).ok' | grep -q 1 &&
+          rabbitmq-diagnostics -q listeners | grep -q 5672
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  mongo_data:
+  rabbitmq_data:
