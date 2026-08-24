@@ -222,4 +222,3 @@ Expected: Go 测试通过；镜像构建成功；容器 healthy；入口成功�
 git add scripts docs/deployment-rhel8.md
 git commit -m "docs: add RHEL 8 deployment guide"
 ```
-
