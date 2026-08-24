@@ -47,4 +47,13 @@ while IFS= read -r line || test -n "$line"; do
 done < compose.deploy.yaml
 
 grep -Eq '^[[:space:]]*proxy_pass[[:space:]]+http://127\.0\.0\.1:8080;[[:space:]]*(#.*)?$' deploy/nginx.conf || fail 'nginx must use loopback backend'
+grep -Eq '^[[:space:]]*restart:[[:space:]]*unless-stopped[[:space:]]*(#.*)?$' compose.deploy.yaml || fail 'container must restart unless stopped'
+grep -Eq '^[[:space:]]*-[[:space:]]*mongo_data:/data/db[[:space:]]*(#.*)?$' compose.deploy.yaml || fail 'Mongo data must use the mongo_data volume'
+grep -Eq '^[[:space:]]*-[[:space:]]*rabbitmq_data:/var/lib/rabbitmq[[:space:]]*(#.*)?$' compose.deploy.yaml || fail 'RabbitMQ data must use the rabbitmq_data volume'
+grep -Eq '^[[:space:]]*healthcheck:[[:space:]]*(#.*)?$' compose.deploy.yaml || fail 'container must define a healthcheck'
+for program in mongod rabbitmq backend nginx; do
+  grep -Fq "[program:$program]" deploy/supervisord.conf || fail "supervisord must manage $program"
+done
+grep -Fq 'MONGO_URI=mongodb://$MONGO_APP_USER:$MONGO_APP_PASS@127.0.0.1:27017/imagegen' .env.deploy.example || fail 'example must document loopback Mongo URI'
+grep -Fq 'RABBITMQ_URI=amqp://$RABBITMQ_USER:$RABBITMQ_PASS@127.0.0.1:5672/' .env.deploy.example || fail 'example must document loopback RabbitMQ URI'
 printf 'PASS: deployment layout checks\n'
