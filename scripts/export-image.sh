@@ -10,4 +10,3 @@ image_ref="$(docker compose --env-file "$env_file" -f compose.deploy.yaml config
 test -n "$image_ref" || { printf 'Unable to resolve image reference\n' >&2; exit 1; }
 printf 'Exporting %s to %s\n' "$image_ref" "$output_file"
 docker image save "$image_ref" | gzip > "$output_file"
-
