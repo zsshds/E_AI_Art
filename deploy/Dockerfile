@@ -23,7 +23,7 @@ RUN apt-get update \
     && echo "deb [signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
       > /etc/apt/sources.list.d/mongodb-org-7.0.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends mongodb-org-server mongodb-mongosh \
+    && apt-get install -y --no-install-recommends mongodb-org-server mongodb-mongosh mongodb-database-tools \
     && rm -rf /var/lib/apt/lists/* /etc/nginx/sites-enabled/default
 
 COPY --from=frontend-build /frontend/dist/ /usr/share/nginx/html/

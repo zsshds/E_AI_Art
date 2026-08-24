@@ -56,4 +56,10 @@ for program in mongod rabbitmq backend nginx; do
 done
 grep -Fq 'MONGO_URI=mongodb://$MONGO_APP_USER:$MONGO_APP_PASS@127.0.0.1:27017/imagegen' .env.deploy.example || fail 'example must document loopback Mongo URI'
 grep -Fq 'RABBITMQ_URI=amqp://$RABBITMQ_USER:$RABBITMQ_PASS@127.0.0.1:5672/' .env.deploy.example || fail 'example must document loopback RabbitMQ URI'
+test -x scripts/build-image.sh || fail 'build script must be executable'
+test -x scripts/export-image.sh || fail 'export script must be executable'
+test -x scripts/import-image.sh || fail 'import script must be executable'
+test -f docs/deployment-rhel8.md || fail 'RHEL 8 deployment guide is missing'
+grep -Fq 'docker image save' scripts/export-image.sh || fail 'export script must use docker image save'
+grep -Fq 'docker image load' scripts/import-image.sh || fail 'import script must use docker image load'
 printf 'PASS: deployment layout checks\n'
