@@ -31,4 +31,3 @@ if ! user_exists; then
 fi
 
 as_rabbitmq rabbitmqctl stop
-
