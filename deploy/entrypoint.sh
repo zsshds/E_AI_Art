@@ -8,8 +8,12 @@ required_vars=(
   MONGO_APP_PASS
   RABBITMQ_USER
   RABBITMQ_PASS
+  MONGO_URI
+  RABBITMQ_URI
   JWT_SECRET
   OPENAI_API_KEY
+  ADMIN_USER
+  ADMIN_PASS
 )
 
 for var_name in "${required_vars[@]}"; do
@@ -19,11 +23,7 @@ for var_name in "${required_vars[@]}"; do
   fi
 done
 
-export MONGO_URI="mongodb://${MONGO_APP_USER}:${MONGO_APP_PASS}@127.0.0.1:27017/imagegen"
-export RABBITMQ_URI="amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@127.0.0.1:5672/"
 export SERVER_PORT=8080
-export RABBITMQ_DEFAULT_USER="$RABBITMQ_USER"
-export RABBITMQ_DEFAULT_PASS="$RABBITMQ_PASS"
 
 mkdir -p /data/db /var/lib/rabbitmq
 chown -R mongodb:mongodb /data/db
@@ -76,5 +76,7 @@ if is_new_mongo_volume; then
 else
   printf 'MongoDB data volume is populated; skipping initialization\n'
 fi
+
+/app/deploy/rabbitmq-bootstrap.sh
 
 exec supervisord -c /app/deploy/supervisord.conf

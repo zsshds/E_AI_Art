@@ -11,6 +11,7 @@ test -f deploy/Dockerfile || fail 'deploy/Dockerfile is missing'
 test -f deploy/entrypoint.sh || fail 'deploy/entrypoint.sh is missing'
 test -f deploy/supervisord.conf || fail 'deploy/supervisord.conf is missing'
 test -f deploy/nginx.conf || fail 'deploy/nginx.conf is missing'
+test -f deploy/rabbitmq-bootstrap.sh || fail 'RabbitMQ bootstrap script is missing'
 test -f .env.deploy.example || fail '.env.deploy.example is missing'
 grep -Eq "^[[:space:]]*-[[:space:]]*(8081:80|\"8081:80\"|'8081:80')[[:space:]]*(#.*)?$" compose.deploy.yaml || fail 'LAN entry must be 8081:80'
 
@@ -54,12 +55,18 @@ grep -Eq '^[[:space:]]*healthcheck:[[:space:]]*(#.*)?$' compose.deploy.yaml || f
 for program in mongod rabbitmq backend nginx; do
   grep -Fq "[program:$program]" deploy/supervisord.conf || fail "supervisord must manage $program"
 done
-grep -Fq 'MONGO_URI=mongodb://$MONGO_APP_USER:$MONGO_APP_PASS@127.0.0.1:27017/imagegen' .env.deploy.example || fail 'example must document loopback Mongo URI'
-grep -Fq 'RABBITMQ_URI=amqp://$RABBITMQ_USER:$RABBITMQ_PASS@127.0.0.1:5672/' .env.deploy.example || fail 'example must document loopback RabbitMQ URI'
+grep -Fq '/app/deploy/rabbitmq-bootstrap.sh' deploy/entrypoint.sh || fail 'entrypoint must bootstrap RabbitMQ credentials'
+grep -Eq '^[[:space:]]+ADMIN_USER$' deploy/entrypoint.sh || fail 'entrypoint must require ADMIN_USER'
+grep -Eq '^[[:space:]]+ADMIN_PASS$' deploy/entrypoint.sh || fail 'entrypoint must require ADMIN_PASS'
+grep -Eq '^[[:space:]]+MONGO_URI$' deploy/entrypoint.sh || fail 'entrypoint must require an encoded Mongo URI'
+grep -Eq '^[[:space:]]+RABBITMQ_URI$' deploy/entrypoint.sh || fail 'entrypoint must require an encoded RabbitMQ URI'
+grep -Fq 'MONGO_URI=mongodb://<url-encoded-mongo-app-user>:<url-encoded-mongo-app-password>@127.0.0.1:27017/imagegen' .env.deploy.example || fail 'example must document encoded loopback Mongo URI'
+grep -Fq 'RABBITMQ_URI=amqp://<url-encoded-rabbitmq-user>:<url-encoded-rabbitmq-password>@127.0.0.1:5672/' .env.deploy.example || fail 'example must document encoded loopback RabbitMQ URI'
 test -x scripts/build-image.sh || fail 'build script must be executable'
 test -x scripts/export-image.sh || fail 'export script must be executable'
 test -x scripts/import-image.sh || fail 'import script must be executable'
 test -f docs/deployment-rhel8.md || fail 'RHEL 8 deployment guide is missing'
 grep -Fq 'docker image save' scripts/export-image.sh || fail 'export script must use docker image save'
 grep -Fq 'docker image load' scripts/import-image.sh || fail 'import script must use docker image load'
+grep -Fq 'scripts/import-image.sh' docs/deployment-rhel8.md || fail 'offline guide must include the import script'
 printf 'PASS: deployment layout checks\n'

@@ -33,8 +33,9 @@ COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY deploy/supervisord.conf /app/deploy/supervisord.conf
 COPY deploy/mongo-init.js /app/deploy/mongo-init.js
 COPY deploy/entrypoint.sh /app/deploy/entrypoint.sh
+COPY deploy/rabbitmq-bootstrap.sh /app/deploy/rabbitmq-bootstrap.sh
 
-RUN chmod 0755 /app/deploy/entrypoint.sh \
+RUN chmod 0755 /app/deploy/entrypoint.sh /app/deploy/rabbitmq-bootstrap.sh \
     && mkdir -p /data/db /var/lib/rabbitmq \
     && chown -R mongodb:mongodb /data/db \
     && chown -R rabbitmq:rabbitmq /var/lib/rabbitmq

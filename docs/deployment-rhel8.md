@@ -45,6 +45,8 @@ chmod 600 .env.deploy
 openssl rand -hex 32
 ```
 
+`MONGO_URI` and `RABBITMQ_URI` require URL-encoded usernames and passwords. The simplest option is to use `openssl rand -hex 24` for both service passwords and repeat those values in the matching URI. If a credential contains `@`, `:`, `/`, or `#`, percent-encode it before putting it in the URI.
+
 不要把 \`.env.deploy\`、API Key 或数据库密码提交到 Git。
 
 ## 3. 首次部署
@@ -109,7 +111,7 @@ cp .env.deploy.example .env.deploy
 ./scripts/export-image.sh e-ai-art-local.tar.gz
 ```
 
-把 \`e-ai-art-local.tar.gz\`、\`compose.deploy.yaml\` 和 \`.env.deploy\` 复制到目标服务器，然后导入并启动：
+把 \`e-ai-art-local.tar.gz\`、\`compose.deploy.yaml\`、\`.env.deploy\` 和 \`scripts/import-image.sh\` 复制到目标服务器，然后导入并启动：
 
 ```
 ./scripts/import-image.sh e-ai-art-local.tar.gz
